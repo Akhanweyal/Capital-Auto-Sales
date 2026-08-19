@@ -24,8 +24,8 @@ export const DEALER = {
   name: "Capital Auto Sales",
   phone: "804-372-4422",
   phoneHref: "+18043724422",
-  address: "8607", // <-- add the rest of the street address
-  city: "Richmond, VA",
+  address: "8607 Oakview Ave",
+  city: "Henrico, VA 23228",
   hours: "Mon–Sat 9am – 7pm  ·  Sun by appointment",
 };
 
