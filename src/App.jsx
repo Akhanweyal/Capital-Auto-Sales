@@ -224,6 +224,9 @@ function SiteHeader({ go }) {
 }
 
 function SiteFooter({ go }) {
+  const mapsUrl =
+    "https://maps.google.com/?q=" + encodeURIComponent(DEALER.address + ", " + DEALER.city);
+
   return (
     <footer className="foot">
       <div className="wrap foot-in">
@@ -236,6 +239,11 @@ function SiteFooter({ go }) {
           <p className="micro">Visit</p>
           <p>{DEALER.address}</p>
           <p>{DEALER.city}</p>
+          <p>
+            <a className="linkish" href={mapsUrl} target="_blank" rel="noreferrer">
+              Get directions →
+            </a>
+          </p>
           <p className="foot-hours">{DEALER.hours}</p>
         </div>
         <div>
