@@ -433,8 +433,9 @@ function CarCard({ car, onClick }) {
       <button className="card-hit" onClick={onClick} aria-label={`View ${title(car)}`}>
         <div className="card-img">
           {car.cover ? <img src={car.cover} alt={title(car)} loading="lazy" /> : <CarGhost />}
-          {car.sold && <span className="tag tag-sold">Sold</span>}
-          {!car.sold && car.featured && <span className="tag tag-feat">Featured</span>}
+                    {car.sold && <span className="tag tag-sold">Sold</span>}
+          {!car.sold && car.pending && <span className="tag tag-pending">Sale pending</span>}
+          {!car.sold && !car.pending && car.featured && <span className="tag tag-feat">Featured</span>}
         </div>
         <div className="card-body">
           <h3>{title(car)}</h3>
@@ -933,6 +934,15 @@ function Inventory({ cars, onEdit, onAdd, patch, remove, notify }) {
                 }}
               >
                 {c.sold ? "Mark available" : "Mark sold"}
+              </button>
+                            <button
+                className="mini"
+                onClick={() => {
+                  patch(c, { pending: !c.pending });
+                  notify(c.pending ? "Back to available." : "Marked sale pending.");
+                }}
+              >
+                {c.pending ? "Clear pending" : "Sale pending"}
               </button>
               <button className="mini" onClick={() => patch(c, { featured: !c.featured })}>
                 {c.featured ? "Unfeature" : "Feature"}

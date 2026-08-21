@@ -22,6 +22,7 @@ const fromRow = (r) => ({
   vin: r.vin || "",
   published: !!r.published,
   sold: !!r.sold,
+  pending: !!r.pending,
   featured: !!r.featured,
   cover: r.cover_url || "",
   photos: Array.isArray(r.photos) ? r.photos : [],
@@ -40,6 +41,7 @@ const toRow = (c) => ({
   vin: c.vin || "",
   published: !!c.published,
   sold: !!c.sold,
+  pending: !!c.pending,
   featured: !!c.featured,
   cover_url: c.photos && c.photos[0] ? c.photos[0].url : "",
   photos: c.photos || [],
@@ -73,7 +75,7 @@ export async function insertCar(car) {
 
 export async function updateCar(id, patch) {
   const row = {};
-  const map = {
+   const map = {
     year: "year",
     make: "make",
     model: "model",
@@ -85,6 +87,7 @@ export async function updateCar(id, patch) {
     vin: "vin",
     published: "published",
     sold: "sold",
+    pending: "pending",
     featured: "featured",
   };
   for (const k of Object.keys(patch)) if (map[k]) row[map[k]] = patch[k];
