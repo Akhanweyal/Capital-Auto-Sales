@@ -18,6 +18,7 @@ create table if not exists public.cars (
   vin         text         default '',
   published   boolean      not null default false,
   sold        boolean      not null default false,
+  pending     boolean      not null default false,
   featured    boolean      not null default false,
   cover_url   text         default '',
   photos      jsonb        not null default '[]'::jsonb,

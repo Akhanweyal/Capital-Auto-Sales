@@ -172,7 +172,7 @@ export default function App() {
     <div className="app">
       <SiteHeader go={go} />
       {carId ? (
-        <CarPage car={cars.find((c) => c.id === carId)} go={go} />
+        <CarPage car={cars.find((c) => c.id === carId)} ready={ready} go={go} />
       ) : (
         <Home cars={cars} ready={ready} open={(id) => go(`/car/${id}`)} />
       )}
@@ -461,7 +461,7 @@ function CarCard({ car, onClick }) {
 }
 
 /* ---------- car detail ---------- */
-function CarPage({ car, go }) {
+function CarPage({ car, ready, go }) {
   const [i, setI] = useState(0);
 
   useEffect(() => {
@@ -470,6 +470,13 @@ function CarPage({ car, go }) {
       document.title = `${DEALER.name} — Quality Pre-Owned Cars in Richmond, VA`;
     };
   }, [car]);
+
+  if (!car && !ready)
+    return (
+      <main className="wrap empty">
+        <div className="card skeleton" style={{ width: "100%", maxWidth: 480 }} />
+      </main>
+    );
 
   if (!car)
     return (
