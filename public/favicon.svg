@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="48" fill="#C9A24B" />
+  <circle cx="50" cy="50" r="44.5" fill="#12294A" />
+  <circle cx="50" cy="50" r="41" fill="none" stroke="#C9A24B" stroke-width="0.7" opacity="0.85" />
+  <g fill="#C9A24B">
+    <path d="M39 46h4.5l3.5-7.5h13L64 46h4.5a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H39a3 3 0 0 1-3-3v-5a3 3 0 0 1 3-3z" />
+    <rect x="27" y="45" width="7" height="1.6" rx="0.8" />
+    <rect x="25" y="50" width="9" height="1.6" rx="0.8" />
+    <rect x="28" y="55" width="7" height="1.6" rx="0.8" />
+  </g>
+  <circle cx="45" cy="57" r="4.6" fill="#C9A24B" />
+  <circle cx="45" cy="57" r="1.6" fill="#12294A" />
+  <circle cx="63" cy="57" r="4.6" fill="#C9A24B" />
+  <circle cx="63" cy="57" r="1.6" fill="#12294A" />
+  <rect x="30" y="68" width="40" height="0.9" fill="#C9A24B" opacity="0.8" />
+  <text x="50" y="79" text-anchor="middle" fill="#fff" font-family="Archivo, system-ui, sans-serif" font-weight="700" font-size="12" letter-spacing="0.5">CAS</text>
+</svg>
