@@ -285,7 +285,7 @@ function Home({ cars, ready, open }) {
     const q = f.q.trim().toLowerCase();
     let out = cars.filter((c) => {
       if (q) {
-        const hay = `${c.year} ${c.make} ${c.model} ${c.trim} ${c.description}`.toLowerCase();
+        const hay = `${c.year} ${c.make} ${c.model} ${c.trim} ${c.description} ${c.vin}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (f.make && c.make !== f.make) return false;
@@ -430,7 +430,15 @@ function Home({ cars, ready, open }) {
 function CarCard({ car, onClick }) {
   return (
     <article className={"card" + (car.sold ? " is-sold" : "") + (car.featured ? " is-feat" : "")}>
-      <button className="card-hit" onClick={onClick} aria-label={`View ${title(car)}`}>
+      <a
+        className="card-hit"
+        href={`/car/${car.id}`}
+        onClick={(e) => {
+          e.preventDefault();
+          onClick();
+        }}
+        aria-label={`View ${title(car)}`}
+      >
         <div className="card-img">
           {car.cover ? <img src={car.cover} alt={title(car)} loading="lazy" /> : <CarGhost />}
                     {car.sold && <span className="tag tag-sold">Sold</span>}
@@ -455,7 +463,7 @@ function CarCard({ car, onClick }) {
             </span>
           </div>
         </div>
-      </button>
+      </a>
     </article>
   );
 }

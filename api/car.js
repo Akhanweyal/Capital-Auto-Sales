@@ -22,7 +22,7 @@ async function fetchCar(id) {
 
   const api =
     `${url}/rest/v1/cars?id=eq.${encodeURIComponent(id)}&published=eq.true` +
-    `&select=year,make,model,trim,price,mileage,description,cover_url&limit=1`;
+    `&select=year,make,model,trim,price,mileage,description,cover_url,sold,vin&limit=1`;
 
   const r = await fetch(api, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
   if (!r.ok) return null;
@@ -68,6 +68,26 @@ function withCarMeta(html, car, pageUrl) {
           `    <meta name="twitter:image" content="${esc(car.cover_url)}" />\n  </head>`
       );
   }
+
+  const productLd = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: title,
+    description: desc,
+    brand: { "@type": "Brand", name: car.make },
+    offers: {
+      "@type": "Offer",
+      priceCurrency: "USD",
+      price: Number(car.price) || 0,
+      availability: car.sold ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+      url: pageUrl || undefined,
+    },
+  };
+  if (car.cover_url) productLd.image = car.cover_url;
+  if (car.vin) productLd.sku = car.vin;
+
+  const ldJson = JSON.stringify(productLd).replace(/</g, "\\u003c");
+  out = out.replace("</head>", `    <script type="application/ld+json">${ldJson}</script>\n  </head>`);
 
   return out;
 }
