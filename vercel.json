@@ -1,3 +1,6 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/car/:id", "destination": "/api/car/:id" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
