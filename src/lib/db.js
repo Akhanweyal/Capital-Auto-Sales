@@ -164,6 +164,44 @@ export async function deleteLead(id) {
   if (error) throw error;
 }
 
+/* ---------- what a car cost you (private) ---------- */
+export async function fetchCarCost(carId) {
+  const { data, error } = await supabase.from("car_costs").select("*").eq("car_id", carId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function upsertCarCost(carId, { cost, expenses }) {
+  const { error } = await supabase
+    .from("car_costs")
+    .upsert({ car_id: carId, cost: Number(cost) || 0, expenses: expenses || [], updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+/* ---------- buyer's orders / sales records (private) ---------- */
+export async function fetchSales() {
+  const { data, error } = await supabase.from("sales").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function createSale(row) {
+  const { data, error } = await supabase.from("sales").insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateSale(id, patch) {
+  const { data, error } = await supabase.from("sales").update(patch).eq("id", id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteSale(id) {
+  const { error } = await supabase.from("sales").delete().eq("id", id);
+  if (error) throw error;
+}
+
 /* ---------- dealer sign in ---------- */
 export async function signIn(email, password) {
   const { error } = await supabase.auth.signInWithPassword({ email, password });

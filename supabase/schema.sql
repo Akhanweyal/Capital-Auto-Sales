@@ -38,8 +38,57 @@ create table if not exists public.leads (
   created_at timestamptz not null default now()
 );
 
-alter table public.cars  enable row level security;
-alter table public.leads enable row level security;
+-- ---------- what each car cost you (never public) ----------
+create table if not exists public.car_costs (
+  car_id     uuid        primary key references public.cars (id) on delete cascade,
+  cost       numeric     not null default 0,
+  expenses   jsonb       not null default '[]'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+-- ---------- buyer's orders / sales records (never public) ----------
+create table if not exists public.sales (
+  id           uuid primary key default gen_random_uuid(),
+  car_id       uuid references public.cars (id) on delete set null,
+  sale_date    date        not null default current_date,
+  stock_number text        default '',
+
+  vehicle       jsonb not null default '{}'::jsonb,
+  buyer         jsonb not null default '{}'::jsonb,
+  co_buyer_name text  default '',
+  trade_in      jsonb not null default '{}'::jsonb,
+  insurance     jsonb not null default '{}'::jsonb,
+  lien_holder   jsonb not null default '{}'::jsonb,
+  remarks       text  default '',
+  salesperson   text  default '',
+
+  vehicle_price         numeric not null default 0,
+  processing_fee        numeric not null default 0,
+  gross_trade_allowance numeric not null default 0,
+  trade_payoff          numeric not null default 0,
+  sales_tax             numeric not null default 0,
+  license_fee           numeric not null default 0,
+  title_fee             numeric not null default 0,
+  registration_fee      numeric not null default 0,
+  highway_use_fee       numeric not null default 0,
+  dealer_biz_tax        numeric not null default 0,
+  online_filing_fee     numeric not null default 0,
+  other_charges         jsonb   not null default '[]'::jsonb,
+  deposit               numeric not null default 0,
+  down_payment          numeric not null default 0,
+  payment_type          text    not null default 'cash',
+
+  car_cost     numeric not null default 0,
+  car_expenses jsonb   not null default '[]'::jsonb,
+
+  finalized  boolean     not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table public.cars       enable row level security;
+alter table public.leads      enable row level security;
+alter table public.car_costs  enable row level security;
+alter table public.sales      enable row level security;
 
 -- ---------- who can do what ----------
 -- Anyone (a visitor) can read cars you have published.
@@ -66,6 +115,20 @@ create policy "public creates leads"
 drop policy if exists "dealer manages leads" on public.leads;
 create policy "dealer manages leads"
   on public.leads for all
+  to authenticated
+  using (true) with check (true);
+
+-- Only you can ever see what a car cost you or read a sale record —
+-- no policy at all for anon means the public API always gets nothing back.
+drop policy if exists "dealer manages car costs" on public.car_costs;
+create policy "dealer manages car costs"
+  on public.car_costs for all
+  to authenticated
+  using (true) with check (true);
+
+drop policy if exists "dealer manages sales" on public.sales;
+create policy "dealer manages sales"
+  on public.sales for all
   to authenticated
   using (true) with check (true);
 

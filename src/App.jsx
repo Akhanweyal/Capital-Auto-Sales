@@ -13,9 +13,16 @@ import {
   fetchLeads,
   updateLead,
   deleteLead,
+  fetchCarCost,
+  upsertCarCost,
+  fetchSales,
+  createSale,
+  updateSale,
+  deleteSale,
   signIn,
   signOut,
 } from "./lib/db.js";
+import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -34,8 +41,16 @@ const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
     Number(n) || 0
   );
+const moneyCents = (n) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n) || 0);
 const miles = (n) => new Intl.NumberFormat("en-US").format(Number(n) || 0);
 const title = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}`.trim();
+
+function setPath(obj, path, value) {
+  const [head, ...rest] = path.split(".");
+  if (!rest.length) return { ...obj, [head]: value };
+  return { ...obj, [head]: setPath(obj[head] || {}, rest.join("."), value) };
+}
 
 function loadImage(file) {
   return new Promise((res, rej) => {
@@ -685,8 +700,10 @@ function Admin({ go, say }) {
   const [session, setSession] = useState(undefined); // undefined = still checking
   const [cars, setCars] = useState([]);
   const [leads, setLeads] = useState([]);
+  const [sales, setSales] = useState([]);
   const [tab, setTab] = useState("inventory");
   const [editing, setEditing] = useState(null);
+  const [editingSale, setEditingSale] = useState(null); // null | {} | {car} | {sale}
   const [toast, setToast] = useState(null);
   const timer = useRef(null);
 
@@ -704,9 +721,10 @@ function Admin({ go, say }) {
 
   const reload = useCallback(async () => {
     try {
-      const [c, l] = await Promise.all([fetchAllCars(), fetchLeads()]);
+      const [c, l, s] = await Promise.all([fetchAllCars(), fetchLeads(), fetchSales()]);
       setCars(c);
       setLeads(l);
+      setSales(s);
     } catch (e) {
       notify("Couldn't load your inventory. Check your connection.");
     }
@@ -777,6 +795,9 @@ function Admin({ go, say }) {
           <button className={tab === "leads" ? "on" : ""} onClick={() => setTab("leads")}>
             Customer requests {newLeads > 0 && <span className="count hot">{newLeads}</span>}
           </button>
+          <button className={tab === "sales" ? "on" : ""} onClick={() => setTab("sales")}>
+            Sales <span className="count">{sales.length}</span>
+          </button>
         </div>
       </header>
 
@@ -794,18 +815,42 @@ function Admin({ go, say }) {
           />
         )}
 
-        {!editing && tab === "inventory" && (
+        {editingSale && (
+          <SaleForm
+            initial={editingSale}
+            cars={cars}
+            onCancel={() => setEditingSale(null)}
+            onSaved={(saved, wasFinalized) => {
+              setSales((ss) => {
+                const exists = ss.some((x) => x.id === saved.id);
+                return exists ? ss.map((x) => (x.id === saved.id ? saved : x)) : [saved, ...ss];
+              });
+              if (wasFinalized && saved.car_id) {
+                setCars((cs) => cs.map((c) => (c.id === saved.car_id ? { ...c, sold: true } : c)));
+              }
+              setEditingSale(null);
+              notify(wasFinalized ? "Sale finalized — car marked sold." : "Buyer's order saved.");
+            }}
+            notify={notify}
+          />
+        )}
+
+        {!editing && !editingSale && tab === "inventory" && (
           <Inventory
             cars={cars}
             onEdit={setEditing}
             onAdd={() => setEditing("new")}
+            onSell={(car) => {
+              setEditingSale({ car });
+              setTab("sales");
+            }}
             patch={patch}
             remove={remove}
             notify={notify}
           />
         )}
 
-        {!editing && tab === "leads" && (
+        {!editing && !editingSale && tab === "leads" && (
           <Leads
             leads={leads}
             onToggle={async (l) => {
@@ -815,6 +860,24 @@ function Admin({ go, say }) {
             onDelete={async (l) => {
               await deleteLead(l.id);
               setLeads((ls) => ls.filter((x) => x.id !== l.id));
+            }}
+          />
+        )}
+
+        {!editing && !editingSale && tab === "sales" && (
+          <SalesList
+            sales={sales}
+            onNew={() => setEditingSale({})}
+            onEdit={(sale) => setEditingSale({ sale })}
+            onDelete={async (sale) => {
+              if (!window.confirm("Delete this buyer's order? This does not un-sell the car.")) return;
+              try {
+                await deleteSale(sale.id);
+                setSales((ss) => ss.filter((x) => x.id !== sale.id));
+                notify("Buyer's order deleted.");
+              } catch (e) {
+                notify("Couldn't delete that record.");
+              }
             }}
           />
         )}
@@ -876,7 +939,7 @@ function SignIn({ go }) {
   );
 }
 
-function Inventory({ cars, onEdit, onAdd, patch, remove, notify }) {
+function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
   const live = cars.filter((c) => c.published && !c.sold).length;
   const sold = cars.filter((c) => c.sold).length;
   const drafts = cars.filter((c) => !c.published).length;
@@ -959,6 +1022,11 @@ function Inventory({ cars, onEdit, onAdd, patch, remove, notify }) {
               >
                 {c.pending ? "Clear pending" : "Sale pending"}
               </button>
+              {!c.sold && (
+                <button className="mini" onClick={() => onSell(c)}>
+                  Sell
+                </button>
+              )}
               <button className="mini" onClick={() => patch(c, { featured: !c.featured })}>
                 {c.featured ? "Unfeature" : "Feature"}
               </button>
@@ -989,14 +1057,60 @@ const BLANK = {
   featured: false,
 };
 
+/* ---------- repeatable {label, amount} rows — used for car expenses and buyer's-order line items ---------- */
+function LineItems({ items, onChange, addLabel }) {
+  const set = (i, key) => (e) => {
+    const next = items.slice();
+    next[i] = { ...next[i], [key]: e.target.value };
+    onChange(next);
+  };
+  const add = () => onChange([...items, { label: "", amount: "" }]);
+  const remove = (i) => onChange(items.filter((_, k) => k !== i));
+  const total = items.reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
+
+  return (
+    <div className="lineitems">
+      {items.map((it, i) => (
+        <div className="lineitem" key={i}>
+          <input value={it.label} onChange={set(i, "label")} placeholder="Description" />
+          <input value={it.amount} onChange={set(i, "amount")} inputMode="numeric" placeholder="0.00" />
+          <button type="button" onClick={() => remove(i)} aria-label="Remove line">
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="lineitem-acts">
+        <button type="button" className="linkish" onClick={add}>
+          + {addLabel || "Add line"}
+        </button>
+        {items.length > 0 && <span className="lineitem-total">{money(total)}</span>}
+      </div>
+    </div>
+  );
+}
+
 function CarForm({ car, onCancel, onSaved, notify }) {
   const [v, setV] = useState(car ? { ...BLANK, ...car } : BLANK);
   const [photos, setPhotos] = useState(car ? car.photos : []);
+  const [cost, setCost] = useState("");
+  const [expenses, setExpenses] = useState([]);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [drag, setDrag] = useState(false);
   const [err, setErr] = useState("");
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (!car) return;
+    fetchCarCost(car.id)
+      .then((c) => {
+        if (c) {
+          setCost(c.cost || "");
+          setExpenses(c.expenses || []);
+        }
+      })
+      .catch(() => {});
+  }, [car]);
 
   const set = (k) => (e) =>
     setV({ ...v, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
@@ -1056,6 +1170,11 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     };
     try {
       const saved = car ? await updateCar(car.id, payload) : await insertCar(payload);
+      try {
+        await upsertCarCost(saved.id, { cost: Number(cost) || 0, expenses });
+      } catch (e) {
+        notify("Saved the car, but the cost/expenses didn't save. Edit the car again to retry.");
+      }
       onSaved(saved, !car);
     } catch (e) {
       setErr("That didn't save. Check your connection and try again.");
@@ -1180,6 +1299,20 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         </label>
       </div>
 
+      <div className="cost-section">
+        <p className="micro gold">Cost &amp; expenses — private, never shown on the website</p>
+        <div className="fields">
+          <label>
+            <span>What you paid for this car</span>
+            <input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="numeric" placeholder="0.00" />
+          </label>
+        </div>
+        <p className="micro" style={{ marginTop: 14 }}>
+          Other expenses (repairs, detailing, transport…)
+        </p>
+        <LineItems items={expenses} onChange={setExpenses} addLabel="Add expense" />
+      </div>
+
       {err && <p className="err">{err}</p>}
 
       <div className="form-acts">
@@ -1237,6 +1370,810 @@ function Leads({ leads, onToggle, onDelete }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ============================================================
+   SALES — buyer's orders + records
+   ============================================================ */
+function SalesList({ sales, onNew, onEdit, onDelete }) {
+  const finalizedSales = sales.filter((s) => s.finalized);
+  const totalRevenue = finalizedSales.reduce((sum, s) => sum + saleTotals(s).totalDue, 0);
+  const totalProfit = finalizedSales.reduce((sum, s) => sum + saleTotals(s).netProfit, 0);
+
+  const exportCsv = () => {
+    const csv = salesToCsv(sales);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `capital-auto-sales-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!sales.length)
+    return (
+      <div className="empty">
+        <Badge size={64} />
+        <h3>No sales recorded yet</h3>
+        <p>Start a buyer's order from a car in Inventory, or start a blank one here.</p>
+        <button className="btn btn-gold" onClick={onNew}>
+          + New buyer's order
+        </button>
+      </div>
+    );
+
+  return (
+    <>
+      <div className="stats">
+        <div>
+          <strong>{finalizedSales.length}</strong>
+          <em>Cars sold</em>
+        </div>
+        <div>
+          <strong>{moneyCents(totalRevenue)}</strong>
+          <em>Total collected</em>
+        </div>
+        <div>
+          <strong>{moneyCents(totalProfit)}</strong>
+          <em>Net profit</em>
+        </div>
+      </div>
+
+      <div className="inv-head">
+        <button className="btn btn-gold" onClick={onNew}>
+          + New buyer's order
+        </button>
+        <button className="linkish" onClick={exportCsv}>
+          Export CSV for taxes
+        </button>
+      </div>
+
+      <div className="rows">
+        {sales.map((s) => {
+          const t = saleTotals(s);
+          const v = s.vehicle || {};
+          return (
+            <div key={s.id} className="row">
+              <div className="row-main">
+                <h3>
+                  {v.year} {v.make} {v.model}
+                  {v.trim ? ` ${v.trim}` : ""}
+                </h3>
+                <p className="row-meta">
+                  {(s.buyer && s.buyer.name) || "No buyer name yet"} · {s.sale_date} · Total{" "}
+                  {moneyCents(t.totalDue)} · Profit {moneyCents(t.netProfit)}
+                </p>
+                <div className="chips">
+                  {s.finalized ? (
+                    <span className="chip chip-live">Finalized</span>
+                  ) : (
+                    <span className="chip">Draft</span>
+                  )}
+                </div>
+              </div>
+              <div className="row-acts">
+                <button className="mini" onClick={() => onEdit(s)}>
+                  {s.finalized ? "View / print" : "Continue"}
+                </button>
+                <button className="mini danger" onClick={() => onDelete(s)}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function CarPicker({ cars, onPick }) {
+  const [q, setQ] = useState("");
+  const matches = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return [];
+    return cars
+      .filter((c) => `${c.year} ${c.make} ${c.model} ${c.trim} ${c.vin}`.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [cars, q]);
+
+  return (
+    <div className="carpicker">
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search your inventory by year, make, model or VIN…"
+      />
+      {matches.length > 0 && (
+        <div className="carpicker-list">
+          {matches.map((c) => (
+            <button key={c.id} type="button" onClick={() => onPick(c)}>
+              {title(c)} — {money(c.price)}
+              {c.sold ? " (sold)" : ""}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
+  const existing = initial.sale || null;
+  const [s, setS] = useState(() => (existing ? { ...BLANK_SALE, ...existing } : { ...BLANK_SALE }));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const startedFromCar = useRef(false);
+
+  const pickCar = useCallback((car) => {
+    setS((prev) => ({
+      ...prev,
+      car_id: car.id,
+      vehicle: { ...prev.vehicle, year: car.year, make: car.make, model: car.model, trim: car.trim || "", vin: car.vin || "", mileage: car.mileage },
+      vehicle_price: car.price,
+    }));
+    fetchCarCost(car.id)
+      .then((c) => {
+        if (c) setS((prev) => ({ ...prev, car_cost: c.cost || 0, car_expenses: c.expenses || [] }));
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (existing || startedFromCar.current) return;
+    if (initial.car) {
+      startedFromCar.current = true;
+      pickCar(initial.car);
+    }
+  }, [existing, initial.car, pickCar]);
+
+  // keep the VA sales tax in sync with the subtotal as the dealer edits price/trade fields
+  useEffect(() => {
+    const cashPrice = (Number(s.vehicle_price) || 0) + (Number(s.processing_fee) || 0);
+    const netTradeAllowance = (Number(s.gross_trade_allowance) || 0) - (Number(s.trade_payoff) || 0);
+    const tax = calcVaTax(cashPrice - netTradeAllowance);
+    setS((prev) => (Number(prev.sales_tax) === tax ? prev : { ...prev, sales_tax: tax }));
+  }, [s.vehicle_price, s.processing_fee, s.gross_trade_allowance, s.trade_payoff]);
+
+  const set = (path) => (e) => setS((prev) => setPath(prev, path, e.target.value));
+  const totals = saleTotals(s);
+
+  const buildPayload = () => ({
+    car_id: s.car_id,
+    sale_date: s.sale_date,
+    stock_number: s.stock_number,
+    vehicle: s.vehicle,
+    buyer: s.buyer,
+    co_buyer_name: s.co_buyer_name,
+    trade_in: s.trade_in,
+    insurance: s.insurance,
+    lien_holder: s.lien_holder,
+    remarks: s.remarks,
+    salesperson: s.salesperson,
+    vehicle_price: Number(s.vehicle_price) || 0,
+    processing_fee: Number(s.processing_fee) || 0,
+    gross_trade_allowance: Number(s.gross_trade_allowance) || 0,
+    trade_payoff: Number(s.trade_payoff) || 0,
+    sales_tax: Number(s.sales_tax) || 0,
+    license_fee: Number(s.license_fee) || 0,
+    title_fee: Number(s.title_fee) || 0,
+    registration_fee: Number(s.registration_fee) || 0,
+    highway_use_fee: Number(s.highway_use_fee) || 0,
+    dealer_biz_tax: Number(s.dealer_biz_tax) || 0,
+    online_filing_fee: Number(s.online_filing_fee) || 0,
+    other_charges: s.other_charges,
+    deposit: Number(s.deposit) || 0,
+    down_payment: Number(s.down_payment) || 0,
+    payment_type: s.payment_type,
+    car_cost: Number(s.car_cost) || 0,
+    car_expenses: s.car_expenses,
+  });
+
+  const save = async (finalize) => {
+    if (finalize && !(s.buyer.name || "").trim()) {
+      setErr("Add the buyer's name before finalizing.");
+      return;
+    }
+    setErr("");
+    setBusy(true);
+    const payload = { ...buildPayload(), finalized: finalize || !!(existing && existing.finalized) };
+    try {
+      const saved = existing ? await updateSale(existing.id, payload) : await createSale(payload);
+      if (finalize && saved.car_id) {
+        try {
+          await updateCar(saved.car_id, { sold: true });
+        } catch (e) {
+          notify("Sale saved, but couldn't mark the car sold — do it from Inventory.");
+        }
+      }
+      onSaved(saved, finalize);
+    } catch (e) {
+      setErr("That didn't save. Check your connection and try again.");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="form saleform">
+      <div className="form-head">
+        <h2>{existing ? "Buyer's order" : "New buyer's order"}</h2>
+        <button className="linkish" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      {!s.car_id && (
+        <div className="sale-section">
+          <p className="micro gold">Pick the car being sold</p>
+          <CarPicker cars={cars} onPick={pickCar} />
+        </div>
+      )}
+
+      <div className="sale-grid">
+        <div>
+          <div className="sale-section">
+            <p className="micro gold">Order</p>
+            <div className="fields">
+              <label>
+                <span>Date</span>
+                <input type="date" value={s.sale_date} onChange={set("sale_date")} />
+              </label>
+              <label>
+                <span>Stock #</span>
+                <input value={s.stock_number} onChange={set("stock_number")} />
+              </label>
+              <label>
+                <span>Salesperson</span>
+                <input value={s.salesperson} onChange={set("salesperson")} />
+              </label>
+            </div>
+          </div>
+
+          <div className="sale-section">
+            <p className="micro gold">Buyer information</p>
+            <div className="fields">
+              <label className="full">
+                <span>Name</span>
+                <input value={s.buyer.name} onChange={set("buyer.name")} />
+              </label>
+              <label className="full">
+                <span>Address</span>
+                <input value={s.buyer.address} onChange={set("buyer.address")} />
+              </label>
+              <label>
+                <span>City</span>
+                <input value={s.buyer.city} onChange={set("buyer.city")} />
+              </label>
+              <label>
+                <span>State</span>
+                <input value={s.buyer.state} onChange={set("buyer.state")} />
+              </label>
+              <label>
+                <span>Zip</span>
+                <input value={s.buyer.zip} onChange={set("buyer.zip")} />
+              </label>
+              <label>
+                <span>Home phone</span>
+                <input value={s.buyer.homePhone} onChange={set("buyer.homePhone")} />
+              </label>
+              <label>
+                <span>Cell phone</span>
+                <input value={s.buyer.cellPhone} onChange={set("buyer.cellPhone")} />
+              </label>
+              <label>
+                <span>Work phone</span>
+                <input value={s.buyer.workPhone} onChange={set("buyer.workPhone")} />
+              </label>
+              <label>
+                <span>DL / State ID #</span>
+                <input value={s.buyer.dlNumber} onChange={set("buyer.dlNumber")} />
+              </label>
+              <label>
+                <span>DL state</span>
+                <input value={s.buyer.dlState} onChange={set("buyer.dlState")} />
+              </label>
+              <label>
+                <span>DOB</span>
+                <input type="date" value={s.buyer.dob} onChange={set("buyer.dob")} />
+              </label>
+              <label>
+                <span>County</span>
+                <input value={s.buyer.county} onChange={set("buyer.county")} />
+              </label>
+              <label>
+                <span>DL exp. date</span>
+                <input type="date" value={s.buyer.dlExp} onChange={set("buyer.dlExp")} />
+              </label>
+              <label className="full">
+                <span>Co-buyer name (optional)</span>
+                <input value={s.co_buyer_name} onChange={set("co_buyer_name")} />
+              </label>
+            </div>
+          </div>
+
+          <div className="sale-section">
+            <p className="micro gold">Vehicle information</p>
+            <div className="fields">
+              <label>
+                <span>New / Used / Demo</span>
+                <select value={s.vehicle.newUsed} onChange={set("vehicle.newUsed")}>
+                  <option>Used</option>
+                  <option>New</option>
+                  <option>Demo</option>
+                </select>
+              </label>
+              <label>
+                <span>Year</span>
+                <input value={s.vehicle.year} onChange={set("vehicle.year")} inputMode="numeric" />
+              </label>
+              <label>
+                <span>Make</span>
+                <input value={s.vehicle.make} onChange={set("vehicle.make")} />
+              </label>
+              <label>
+                <span>Model</span>
+                <input value={s.vehicle.model} onChange={set("vehicle.model")} />
+              </label>
+              <label>
+                <span>Trim</span>
+                <input value={s.vehicle.trim} onChange={set("vehicle.trim")} />
+              </label>
+              <label>
+                <span>Body</span>
+                <input value={s.vehicle.body} onChange={set("vehicle.body")} placeholder="Sedan, SUV…" />
+              </label>
+              <label>
+                <span>Color 1</span>
+                <input value={s.vehicle.color1} onChange={set("vehicle.color1")} />
+              </label>
+              <label>
+                <span>Color 2</span>
+                <input value={s.vehicle.color2} onChange={set("vehicle.color2")} />
+              </label>
+              <label>
+                <span>Style</span>
+                <input value={s.vehicle.style} onChange={set("vehicle.style")} />
+              </label>
+              <label>
+                <span>Cylinders</span>
+                <input value={s.vehicle.cyl} onChange={set("vehicle.cyl")} />
+              </label>
+              <label>
+                <span>Transmission</span>
+                <input value={s.vehicle.trans} onChange={set("vehicle.trans")} placeholder="Automatic" />
+              </label>
+              <label>
+                <span>Mileage</span>
+                <input value={s.vehicle.mileage} onChange={set("vehicle.mileage")} inputMode="numeric" />
+              </label>
+              <label className="full">
+                <span>VIN</span>
+                <input value={s.vehicle.vin} onChange={set("vehicle.vin")} />
+              </label>
+            </div>
+          </div>
+
+          <div className="sale-section">
+            <p className="micro gold">Trade-in (optional)</p>
+            <div className="fields">
+              <label>
+                <span>Year</span>
+                <input value={s.trade_in.year} onChange={set("trade_in.year")} inputMode="numeric" />
+              </label>
+              <label>
+                <span>Make</span>
+                <input value={s.trade_in.make} onChange={set("trade_in.make")} />
+              </label>
+              <label>
+                <span>Model</span>
+                <input value={s.trade_in.model} onChange={set("trade_in.model")} />
+              </label>
+              <label>
+                <span>Body</span>
+                <input value={s.trade_in.body} onChange={set("trade_in.body")} />
+              </label>
+              <label>
+                <span>Color</span>
+                <input value={s.trade_in.color} onChange={set("trade_in.color")} />
+              </label>
+              <label>
+                <span>Mileage</span>
+                <input value={s.trade_in.mileage} onChange={set("trade_in.mileage")} inputMode="numeric" />
+              </label>
+              <label className="full">
+                <span>VIN</span>
+                <input value={s.trade_in.vin} onChange={set("trade_in.vin")} />
+              </label>
+              <label>
+                <span>Balance owed to</span>
+                <input value={s.trade_in.balanceOwedTo} onChange={set("trade_in.balanceOwedTo")} />
+              </label>
+              <label>
+                <span>Balance owed</span>
+                <input value={s.trade_in.balanceOwed} onChange={set("trade_in.balanceOwed")} inputMode="numeric" />
+              </label>
+              <label>
+                <span>Good through</span>
+                <input type="date" value={s.trade_in.goodThrough} onChange={set("trade_in.goodThrough")} />
+              </label>
+              <label>
+                <span>Quoted by</span>
+                <input value={s.trade_in.quotedBy} onChange={set("trade_in.quotedBy")} />
+              </label>
+            </div>
+          </div>
+
+          <div className="sale-section">
+            <p className="micro gold">Insurance (optional)</p>
+            <div className="fields">
+              <label>
+                <span>Company</span>
+                <input value={s.insurance.company} onChange={set("insurance.company")} />
+              </label>
+              <label>
+                <span>Policy #</span>
+                <input value={s.insurance.policy} onChange={set("insurance.policy")} />
+              </label>
+              <label>
+                <span>Agent</span>
+                <input value={s.insurance.agent} onChange={set("insurance.agent")} />
+              </label>
+              <label>
+                <span>Phone</span>
+                <input value={s.insurance.phone} onChange={set("insurance.phone")} />
+              </label>
+            </div>
+          </div>
+
+          <div className="sale-section">
+            <p className="micro gold">Lien holder (if financed)</p>
+            <div className="fields">
+              <label className="full">
+                <span>Company</span>
+                <input value={s.lien_holder.company} onChange={set("lien_holder.company")} />
+              </label>
+              <label className="full">
+                <span>Street</span>
+                <input value={s.lien_holder.street} onChange={set("lien_holder.street")} />
+              </label>
+              <label className="full">
+                <span>City, state, zip</span>
+                <input value={s.lien_holder.cityStateZip} onChange={set("lien_holder.cityStateZip")} />
+              </label>
+            </div>
+          </div>
+
+          <div className="sale-section">
+            <p className="micro gold">Remarks</p>
+            <textarea value={s.remarks} onChange={set("remarks")} rows={3} />
+          </div>
+        </div>
+
+        <aside className="settle">
+          <p className="micro gold">Settlement</p>
+
+          <label>
+            <span>Vehicle price</span>
+            <input value={s.vehicle_price} onChange={set("vehicle_price")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Processing fee</span>
+            <input value={s.processing_fee} onChange={set("processing_fee")} inputMode="numeric" />
+          </label>
+          <div className="settle-row strong">
+            <span>Cash price</span>
+            <strong>{moneyCents(totals.cashPrice)}</strong>
+          </div>
+
+          <label>
+            <span>Gross trade-in allowance</span>
+            <input value={s.gross_trade_allowance} onChange={set("gross_trade_allowance")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Less payoff</span>
+            <input value={s.trade_payoff} onChange={set("trade_payoff")} inputMode="numeric" />
+          </label>
+          <div className="settle-row strong">
+            <span>Net trade-in allowance</span>
+            <strong>{moneyCents(totals.netTradeAllowance)}</strong>
+          </div>
+          <div className="settle-row strong">
+            <span>Subtotal</span>
+            <strong>{moneyCents(totals.subtotal)}</strong>
+          </div>
+
+          <Rule />
+          <p className="micro">Taxes &amp; fees</p>
+          <div className="settle-row">
+            <span>4.15% VA sales &amp; use tax</span>
+            <strong>{moneyCents(s.sales_tax)}</strong>
+          </div>
+          <label>
+            <span>License fee</span>
+            <input value={s.license_fee} onChange={set("license_fee")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Title fee</span>
+            <input value={s.title_fee} onChange={set("title_fee")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Registration fee</span>
+            <input value={s.registration_fee} onChange={set("registration_fee")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Highway use fee</span>
+            <input value={s.highway_use_fee} onChange={set("highway_use_fee")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Dealer's business license tax</span>
+            <input value={s.dealer_biz_tax} onChange={set("dealer_biz_tax")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>On-line systems filing fee</span>
+            <input value={s.online_filing_fee} onChange={set("online_filing_fee")} inputMode="numeric" />
+          </label>
+          <p className="micro" style={{ marginTop: 10 }}>
+            Other charges
+          </p>
+          <LineItems items={s.other_charges} onChange={(v) => setS((prev) => ({ ...prev, other_charges: v }))} addLabel="Add charge" />
+
+          <div className="settle-row strong big">
+            <span>Total due</span>
+            <strong>{moneyCents(totals.totalDue)}</strong>
+          </div>
+
+          <Rule />
+          <p className="micro">Credit</p>
+          <label>
+            <span>Deposit</span>
+            <input value={s.deposit} onChange={set("deposit")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Total down payment</span>
+            <input value={s.down_payment} onChange={set("down_payment")} inputMode="numeric" />
+          </label>
+          <div className="settle-row strong">
+            <span>Total credit</span>
+            <strong>{moneyCents(totals.totalCredit)}</strong>
+          </div>
+          <div className="settle-row strong big">
+            <span>Balance due</span>
+            <strong>{moneyCents(totals.balanceDue)}</strong>
+          </div>
+
+          <label>
+            <span>Payment type</span>
+            <select value={s.payment_type} onChange={set("payment_type")}>
+              <option value="cash">Cash</option>
+              <option value="finance">Finance</option>
+            </select>
+          </label>
+
+          {s.car_id && (
+            <p className="micro" style={{ marginTop: 14 }}>
+              Est. net profit: <strong>{moneyCents(totals.netProfit)}</strong>
+            </p>
+          )}
+        </aside>
+      </div>
+
+      {err && <p className="err">{err}</p>}
+
+      <div className="form-acts">
+        <button className="btn btn-gold" disabled={busy} onClick={() => save(true)}>
+          {busy ? "Saving…" : "Finalize sale"}
+        </button>
+        <button className="btn btn-navy" disabled={busy} onClick={() => save(false)}>
+          Save without finalizing
+        </button>
+        <button className="linkish" onClick={() => window.print()}>
+          Print / save as PDF
+        </button>
+        <button className="linkish" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+
+      <SaleDocument s={s} totals={totals} />
+    </div>
+  );
+}
+
+function Row({ label, value, strong, big }) {
+  return (
+    <div className={"doc-row" + (strong ? " strong" : "") + (big ? " big" : "")}>
+      <span>{label}</span>
+      <span>{moneyCents(value)}</span>
+    </div>
+  );
+}
+
+function SaleDocument({ s, totals }) {
+  const v = s.vehicle || {};
+  const b = s.buyer || {};
+  const t = s.trade_in || {};
+  const ins = s.insurance || {};
+  const lien = s.lien_holder || {};
+  const hasTrade = t.year || t.make || t.vin;
+  const hasInsurance = ins.company || ins.policy;
+  const hasLien = lien.company;
+
+  return (
+    <div className="print-area sale-doc">
+      <div className="doc-head">
+        <h2>BUYER'S ORDER</h2>
+        <div>
+          <span>DATE: {s.sale_date}</span>
+          <span>STOCK #: {s.stock_number}</span>
+        </div>
+      </div>
+
+      <div className="doc-grid">
+        <div className="doc-col">
+          <section>
+            <h4>Buyer information</h4>
+            <p>{b.name}</p>
+            <p>{b.address}</p>
+            <p>
+              {b.city}, {b.state} {b.zip}
+            </p>
+            <p>
+              Home {b.homePhone} · Cell {b.cellPhone} · Work {b.workPhone}
+            </p>
+            <p>
+              DL/State ID # {b.dlNumber} ({b.dlState}) · DOB {b.dob}
+            </p>
+            <p>
+              County {b.county} · Exp {b.dlExp}
+            </p>
+            {s.co_buyer_name && <p>Co-buyer: {s.co_buyer_name}</p>}
+          </section>
+
+          <section>
+            <h4>Vehicle information — {v.newUsed}</h4>
+            <p>
+              {v.year} {v.make} {v.model} {v.trim} {v.body ? `— ${v.body}` : ""}
+            </p>
+            <p>
+              Color {v.color1}
+              {v.color2 ? ` / ${v.color2}` : ""} · Style {v.style} · Cyl {v.cyl} · Trans {v.trans}
+            </p>
+            <p>
+              VIN {v.vin} · Mileage {miles(v.mileage)}
+            </p>
+          </section>
+
+          {hasTrade && (
+            <section>
+              <h4>Trade-in information</h4>
+              <p>
+                {t.year} {t.make} {t.model} {t.body ? `— ${t.body}` : ""}
+              </p>
+              <p>
+                VIN {t.vin} · Color {t.color} · Mileage {miles(t.mileage)}
+              </p>
+              <p>
+                Balance owed to {t.balanceOwedTo}: {moneyCents(t.balanceOwed)} · Allowance{" "}
+                {moneyCents(t.allowance)}
+              </p>
+              <p>
+                Good through {t.goodThrough} · Quoted by {t.quotedBy}
+              </p>
+            </section>
+          )}
+
+          {hasInsurance && (
+            <section>
+              <h4>Insurance</h4>
+              <p>
+                {ins.company} · Policy #{ins.policy}
+              </p>
+              <p>
+                {ins.agent} · {ins.phone}
+              </p>
+            </section>
+          )}
+
+          {hasLien && (
+            <section>
+              <h4>Lien holder</h4>
+              <p>{lien.company}</p>
+              <p>{lien.street}</p>
+              <p>{lien.cityStateZip}</p>
+            </section>
+          )}
+
+          {s.remarks && (
+            <section>
+              <h4>Remarks</h4>
+              <p>{s.remarks}</p>
+            </section>
+          )}
+        </div>
+
+        <div className="doc-col">
+          <section>
+            <h4>Seller information</h4>
+            <p>
+              <strong>{DEALER.name}</strong>
+            </p>
+            <p>{DEALER.address}</p>
+            <p>{DEALER.city}</p>
+            <p>{DEALER.phone}</p>
+            <p>Salesperson: {s.salesperson}</p>
+          </section>
+
+          <section className="doc-settlement">
+            <h4>Settlement</h4>
+            <Row label="Vehicle price" value={s.vehicle_price} />
+            <Row label="Processing fee" value={s.processing_fee} />
+            <Row label="Cash price" value={totals.cashPrice} strong />
+            <Row label="Gross trade-in allowance" value={s.gross_trade_allowance} />
+            <Row label="Less payoff" value={s.trade_payoff} />
+            <Row label="Net trade-in allowance" value={totals.netTradeAllowance} strong />
+            <Row label="Subtotal" value={totals.subtotal} strong />
+            <Row label="4.15% VA sales & use tax" value={s.sales_tax} />
+            <Row label="License fee" value={s.license_fee} />
+            <Row label="Title fee" value={s.title_fee} />
+            <Row label="Registration fee" value={s.registration_fee} />
+            <Row label="Highway use fee" value={s.highway_use_fee} />
+            <Row label="Dealer's business license tax" value={s.dealer_biz_tax} />
+            <Row label="On-line systems filing fee" value={s.online_filing_fee} />
+            {(s.other_charges || []).map((c, i) => (
+              <Row key={i} label={c.label || "Other charge"} value={c.amount} />
+            ))}
+            <Row label="Total due" value={totals.totalDue} strong />
+            <Row label="Deposit" value={s.deposit} />
+            <Row label="Total down payment" value={s.down_payment} />
+            <Row label="Total credit" value={totals.totalCredit} strong />
+            <Row label="Balance due" value={totals.balanceDue} strong big />
+            <p className="micro" style={{ marginTop: 6 }}>
+              Payment: {s.payment_type === "finance" ? "Finance" : "Cash"}
+            </p>
+          </section>
+        </div>
+      </div>
+
+      <div className="doc-asis">
+        <p>
+          <strong>FOR "AS IS" SALE ONLY:</strong> I understand that this vehicle is being sold "AS IS" WITH ALL
+          FAULTS, and is not covered by any dealer warranty. I understand that the dealer is not required to
+          make any repairs after I buy this vehicle. I will have to pay for any repairs this vehicle will need.
+        </p>
+        <p className="doc-sign-line">Date: _______________ Signature: X ___________________________</p>
+      </div>
+
+      <div className="doc-noliab">NO LIABILITY INSURANCE INCLUDED</div>
+
+      <p className="doc-legal">
+        By executing this order, Buyer acknowledges that they have read and agree to be bound by all of its
+        terms, and that Buyer has received a fully completed copy. Buyer certifies they are 18 years of age or
+        older.
+      </p>
+
+      <div className="doc-signatures">
+        <div>
+          <span className="doc-sign-line">X ___________________________ ___________</span>
+          <span className="micro">BUYER · DATE</span>
+        </div>
+        <div>
+          <span className="doc-sign-line">X ___________________________ ___________</span>
+          <span className="micro">CO-BUYER · DATE</span>
+        </div>
+        <div>
+          <span className="doc-sign-line">X ___________________________ ___________</span>
+          <span className="micro">ACCEPTED BY AUTHORIZED REPRESENTATIVE · DATE</span>
+        </div>
+      </div>
+
+      <p className="doc-foot">
+        {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 1 of 1
+      </p>
     </div>
   );
 }

@@ -222,6 +222,68 @@ button{font:inherit;cursor:pointer}
 .fields input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold)}
 .form-acts{display:flex;gap:12px;align-items:center;margin-top:22px;flex-wrap:wrap}
 
+/* cost & expenses, repeatable line items */
+.cost-section{border-top:1px solid var(--line);margin-top:22px;padding-top:18px}
+.lineitems{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.lineitem{display:grid;grid-template-columns:1fr 140px 32px;gap:8px;align-items:center}
+.lineitem input{border:1px solid var(--line);padding:9px 10px;font:inherit;font-size:14px;border-radius:2px}
+.lineitem button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:2px;height:36px}
+.lineitem button:hover{border-color:#B4442F;color:#B4442F}
+.lineitem-acts{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:2px}
+.lineitem-total{font-family:var(--display);font-weight:700;color:var(--navy-700)}
+
+/* sale form */
+.saleform .fields{margin-top:14px}
+.sale-section{border-top:1px solid var(--line);margin-top:20px;padding-top:16px}
+.sale-section:first-of-type{border-top:0;margin-top:0;padding-top:0}
+.sale-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:28px;align-items:start;margin-top:18px}
+.carpicker input{width:100%;border:1px solid var(--line);padding:11px 12px;font:inherit;font-size:15px;border-radius:2px;margin-top:10px}
+.carpicker-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;border:1px solid var(--line);max-height:220px;overflow-y:auto}
+.carpicker-list button{text-align:left;background:#fff;border:0;border-bottom:1px solid var(--line);padding:10px 12px;font-size:14px}
+.carpicker-list button:last-child{border-bottom:0}
+.carpicker-list button:hover{background:var(--paper)}
+
+.settle{background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--gold);padding:20px;position:sticky;top:92px;display:flex;flex-direction:column;gap:10px}
+.settle label{display:flex;flex-direction:column;gap:5px}
+.settle label span{font-family:var(--cond);text-transform:uppercase;letter-spacing:.14em;font-size:11px;color:var(--muted)}
+.settle input,.settle select{border:1px solid var(--line);padding:9px 10px;font:inherit;font-size:14px;border-radius:2px;width:100%;background:#fff}
+.settle-row{display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:4px 0}
+.settle-row.strong{border-top:1px solid var(--line);padding-top:8px;margin-top:2px;font-weight:600}
+.settle-row.big strong{font-family:var(--display);font-size:19px;color:var(--navy-700)}
+
+/* printable buyer's order */
+.print-area{display:none}
+.sale-doc{background:#fff;color:#111;font-size:12px;line-height:1.4}
+.doc-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:14px}
+.doc-head h2{font-size:20px;margin:0}
+.doc-head div{display:flex;gap:18px;font-size:12px}
+.doc-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.doc-col section{border:1px solid #ccc;padding:10px 12px;margin-bottom:10px}
+.doc-col h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px;border-bottom:1px solid #ccc;padding-bottom:4px}
+.doc-col p{margin:2px 0}
+.doc-settlement .doc-row{display:flex;justify-content:space-between;font-size:12px;padding:2px 0}
+.doc-row.strong{border-top:1px solid #ccc;margin-top:3px;padding-top:4px;font-weight:700}
+.doc-row.big{font-size:14px}
+.doc-asis{border:1px solid #111;padding:10px 12px;margin-top:14px;font-size:11px}
+.doc-sign-line{display:block;margin-top:10px}
+.doc-noliab{text-align:center;border:1px solid #111;padding:8px;margin-top:12px;font-weight:700;letter-spacing:.06em}
+.doc-legal{font-size:10px;color:#333;margin-top:10px}
+.doc-signatures{display:flex;justify-content:space-between;gap:16px;margin-top:22px;flex-wrap:wrap}
+.doc-signatures>div{flex:1;min-width:180px}
+.doc-foot{text-align:center;font-size:10px;color:#555;margin-top:18px;border-top:1px solid #ccc;padding-top:6px}
+
+@media print{
+  body *{visibility:hidden}
+  .print-area,.print-area *{visibility:visible}
+  .print-area{display:block;position:absolute;top:0;left:0;width:100%;margin:0;padding:16px}
+}
+
+@media (max-width:1080px){
+  .sale-grid{grid-template-columns:1fr}
+  .settle{position:static}
+  .doc-grid{grid-template-columns:1fr}
+}
+
 /* gate */
 .gate{min-height:100vh;background:var(--navy-900);display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--body);color:var(--ink)}
 .gate-card{background:#fff;border-top:3px solid var(--gold);padding:34px;width:100%;max-width:380px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
