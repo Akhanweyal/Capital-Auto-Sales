@@ -1115,9 +1115,11 @@ function VinScanner({ onDetect, onClose }) {
     }
     // Decoded *something*, just not a VIN — tell the user instead of staying
     // silent, but don't spam on repeated frames/attempts of the same miss.
+    // Showing the raw scanned text (not just "it failed") is what lets us
+    // tell a misread VIN apart from a barcode that was never the VIN at all.
     if (text && text !== lastMisreadRef.current) {
       lastMisreadRef.current = text;
-      setNotVin("That barcode isn't a VIN. Try the driver's door jamb sticker, title, or window sticker.");
+      setNotVin(`Scanned "${text}" — that's not a valid VIN. Try the driver's door jamb sticker, title, or window sticker.`);
     } else if (!text) {
       setNotVin("Couldn't find a barcode in that photo. Try a closer, sharper, glare-free shot.");
     }
