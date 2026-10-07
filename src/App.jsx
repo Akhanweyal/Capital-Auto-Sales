@@ -23,6 +23,7 @@ import {
   signOut,
 } from "./lib/db.js";
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
+import { decodeVin, isValidVinFormat } from "./lib/vin.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1089,6 +1090,57 @@ function LineItems({ items, onChange, addLabel }) {
   );
 }
 
+/* ---------- VIN barcode scanner (camera) ---------- */
+function VinScanner({ onDetect, onClose }) {
+  const videoRef = useRef(null);
+  const controlsRef = useRef(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    import("@zxing/browser").then(({ BrowserMultiFormatReader }) => {
+      if (!live) return;
+      const reader = new BrowserMultiFormatReader();
+      reader
+        .decodeFromConstraints({ video: { facingMode: "environment" } }, videoRef.current, (result) => {
+          if (!live || !result) return;
+          const text = result.getText().trim().toUpperCase();
+          if (isValidVinFormat(text)) {
+            controlsRef.current && controlsRef.current.stop();
+            onDetect(text);
+          }
+        })
+        .then((controls) => {
+          if (!live) controls.stop();
+          else controlsRef.current = controls;
+        })
+        .catch(() => live && setErr("Couldn't reach the camera. Check permissions, or type the VIN instead."));
+    });
+    return () => {
+      live = false;
+      controlsRef.current && controlsRef.current.stop();
+    };
+  }, [onDetect]);
+
+  return (
+    <div className="scan-modal" onClick={onClose}>
+      <div className="scan-card" onClick={(e) => e.stopPropagation()}>
+        <div className="scan-head">
+          <p className="micro gold">Scan the VIN barcode</p>
+          <button className="linkish" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <video ref={videoRef} className="scan-video" muted playsInline />
+        <p className="scan-hint">
+          Hold the barcode steady in frame — door jamb sticker, title, or window sticker all work.
+        </p>
+        {err && <p className="err">{err}</p>}
+      </div>
+    </div>
+  );
+}
+
 function CarForm({ car, onCancel, onSaved, notify }) {
   const [v, setV] = useState(car ? { ...BLANK, ...car } : BLANK);
   const [photos, setPhotos] = useState(car ? car.photos : []);
@@ -1098,7 +1150,41 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [uploading, setUploading] = useState(0);
   const [drag, setDrag] = useState(false);
   const [err, setErr] = useState("");
+  const [scanOpen, setScanOpen] = useState(false);
+  const [decoding, setDecoding] = useState(false);
   const fileRef = useRef(null);
+
+  const runDecode = async (vin) => {
+    if (!isValidVinFormat(vin)) {
+      notify("That doesn't look like a complete 17-character VIN.");
+      return;
+    }
+    setDecoding(true);
+    try {
+      const info = await decodeVin(vin);
+      setV((prev) => {
+        const next = { ...prev, vin };
+        const fill = (key, val) => {
+          if (val && !String(prev[key] || "").trim()) next[key] = val;
+        };
+        fill("year", info.year);
+        fill("make", info.make);
+        fill("model", info.model);
+        fill("trim", info.trim);
+        return next;
+      });
+      notify(`Decoded: ${info.year} ${info.make} ${info.model}`.trim());
+    } catch (e) {
+      notify("Couldn't decode that VIN. You can still fill the fields by hand.");
+    }
+    setDecoding(false);
+  };
+
+  const handleScanned = (vin) => {
+    setScanOpen(false);
+    setV((prev) => ({ ...prev, vin }));
+    runDecode(vin);
+  };
 
   useEffect(() => {
     if (!car) return;
@@ -1280,9 +1366,28 @@ function CarForm({ car, onCancel, onSaved, notify }) {
             <option>Fair</option>
           </select>
         </label>
-        <label>
+        <label className="full">
           <span>VIN (optional)</span>
-          <input value={v.vin} onChange={set("vin")} placeholder="1HGCV1F34JA000000" />
+          <div className="vin-row">
+            <input
+              value={v.vin}
+              onChange={set("vin")}
+              placeholder="1HGCV1F34JA000000"
+              maxLength={17}
+              style={{ textTransform: "uppercase" }}
+            />
+            <button type="button" className="mini" onClick={() => setScanOpen(true)}>
+              📷 Scan barcode
+            </button>
+            <button
+              type="button"
+              className="mini"
+              disabled={decoding || !v.vin}
+              onClick={() => runDecode((v.vin || "").trim().toUpperCase())}
+            >
+              {decoding ? "Decoding…" : "Decode VIN"}
+            </button>
+          </div>
         </label>
         <label className="full">
           <span>Short description</span>
@@ -1298,6 +1403,8 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           <span>Feature this car at the top of the website</span>
         </label>
       </div>
+
+      {scanOpen && <VinScanner onDetect={handleScanned} onClose={() => setScanOpen(false)} />}
 
       <div className="cost-section">
         <p className="micro gold">Cost &amp; expenses — private, never shown on the website</p>
