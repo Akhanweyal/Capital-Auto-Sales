@@ -24,6 +24,7 @@ import {
 } from "./lib/db.js";
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
+import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1248,6 +1249,8 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [auctionImages, setAuctionImages] = useState([]);
   const [auctionSelected, setAuctionSelected] = useState(() => new Set());
   const [auctionImporting, setAuctionImporting] = useState(false);
+  const [docBusy, setDocBusy] = useState(false);
+  const docFileRef = useRef(null);
 
   const runDecode = async (vin) => {
     if (!isValidVinFormat(vin)) {
@@ -1279,6 +1282,24 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     setScanOpen(false);
     setV((prev) => ({ ...prev, vin }));
     runDecode(vin);
+  };
+
+  const importAuctionDoc = async (file) => {
+    setDocBusy(true);
+    try {
+      const text = await extractTextFromDocument(file);
+      const { vin, mileage } = parseAuctionText(text);
+      if (mileage) setV((prev) => (prev.mileage ? prev : { ...prev, mileage }));
+      if (vin) {
+        setV((prev) => ({ ...prev, vin }));
+        await runDecode(vin);
+      } else {
+        notify("Couldn't find a VIN in that document. You can still fill the fields by hand.");
+      }
+    } catch (e) {
+      notify("Couldn't read that document. Try a clearer photo, or fill the fields by hand.");
+    }
+    setDocBusy(false);
   };
 
   useEffect(() => {
@@ -1599,7 +1620,30 @@ function CarForm({ car, onCancel, onSaved, notify }) {
             >
               {decoding ? "Decoding…" : "Decode VIN"}
             </button>
+            <button
+              type="button"
+              className="mini"
+              disabled={docBusy}
+              onClick={() => docFileRef.current && docFileRef.current.click()}
+            >
+              {docBusy ? "Reading…" : "📄 Import purchase doc"}
+            </button>
+            <input
+              ref={docFileRef}
+              type="file"
+              accept="application/pdf,image/*"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files && e.target.files[0];
+                e.target.value = "";
+                if (f) importAuctionDoc(f);
+              }}
+            />
           </div>
+          <p className="scan-hint">
+            Upload the condition report/invoice ACV (or any auction) gave you for this win — a
+            VIN found in it decodes automatically, same as scanning the barcode.
+          </p>
         </label>
         <label className="full">
           <span>Short description</span>
