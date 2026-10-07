@@ -1250,6 +1250,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [auctionSelected, setAuctionSelected] = useState(() => new Set());
   const [auctionImporting, setAuctionImporting] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
+  const [docPreview, setDocPreview] = useState("");
   const docFileRef = useRef(null);
 
   const runDecode = async (vin) => {
@@ -1286,6 +1287,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
 
   const importAuctionDoc = async (file) => {
     setDocBusy(true);
+    setDocPreview("");
     try {
       const text = await extractTextFromDocument(file);
       const { vin, mileage } = parseAuctionText(text);
@@ -1294,7 +1296,11 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         setV((prev) => ({ ...prev, vin }));
         await runDecode(vin);
       } else {
+        // Showing what was actually read (not just "it failed") is what lets
+        // us tell bad OCR apart from a photo that's missing/cropping the VIN.
+        const snippet = text.replace(/\s+/g, " ").trim().slice(0, 300);
         notify("Couldn't find a VIN in that document. You can still fill the fields by hand.");
+        setDocPreview(snippet || "(nothing readable came out of that file)");
       }
     } catch (e) {
       notify("Couldn't read that document. Try a clearer photo, or fill the fields by hand.");
@@ -1644,6 +1650,11 @@ function CarForm({ car, onCancel, onSaved, notify }) {
             Upload the condition report/invoice ACV (or any auction) gave you for this win — a
             VIN found in it decodes automatically, same as scanning the barcode.
           </p>
+          {docPreview && (
+            <p className="scan-hint warn">
+              What was read from that file: <em>"{docPreview}"</em>
+            </p>
+          )}
         </label>
         <label className="full">
           <span>Short description</span>
