@@ -23,7 +23,7 @@ import {
   signOut,
 } from "./lib/db.js";
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
-import { decodeVin, isValidVinFormat, isValidVin } from "./lib/vin.js";
+import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1108,9 +1108,10 @@ function VinScanner({ onDetect, onClose }) {
   onDetectRef.current = onDetect;
   const handleResultRef = useRef();
   handleResultRef.current = (text) => {
-    if (isValidVin(text)) {
+    const vin = extractVin(text);
+    if (vin) {
       controlsRef.current && controlsRef.current.stop();
-      onDetectRef.current(text);
+      onDetectRef.current(vin);
       return;
     }
     // Decoded *something*, just not a VIN — tell the user instead of staying
@@ -1130,12 +1131,18 @@ function VinScanner({ onDetect, onClose }) {
     Promise.all([import("@zxing/browser"), import("@zxing/library")]).then(
       ([{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }]) => {
         if (!live) return;
-        // VIN barcodes are Code 39 per the automotive (AIAG) standard; some
-        // dealer-installed window-sticker systems use Code 128 instead.
-        // Narrowing the formats and forcing TRY_HARDER is what makes zxing
-        // reliably read the small, dense bars on a door-jamb sticker.
+        // VIN barcodes on door jambs/window stickers are Code 39 per the
+        // automotive (AIAG) standard, with Code 128 used by some
+        // dealer-installed systems. Titles often carry a PDF417 (the dense
+        // 2D barcode used on driver's licenses and most state documents)
+        // instead of a 1D barcode, so it has to be in this list too or
+        // those scans never match anything at all.
         const hints = new Map();
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39, BarcodeFormat.CODE_128]);
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.CODE_39,
+          BarcodeFormat.CODE_128,
+          BarcodeFormat.PDF_417,
+        ]);
         hints.set(DecodeHintType.TRY_HARDER, true);
         const reader = new BrowserMultiFormatReader(hints);
         readerRef.current = reader;

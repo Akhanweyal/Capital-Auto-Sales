@@ -30,6 +30,18 @@ export function isValidVin(vin) {
   return s[8] === expected;
 }
 
+// A title or registration barcode (often PDF417) typically encodes several
+// fields as one string — title number, VIN, owner/state data — not just the
+// bare VIN, so an exact match against the whole string misses it. Try the
+// whole string first, then fall back to scanning it for any 17-char,
+// VIN-charset window that passes the checksum.
+export function extractVin(text) {
+  const s = (text || "").toUpperCase();
+  if (isValidVin(s)) return s;
+  const candidates = s.match(/[A-HJ-NPR-Z0-9]{17}/g) || [];
+  return candidates.find(isValidVin) || null;
+}
+
 // Free, no-key NHTSA decoder — the same government VIN database dealer
 // software (ComSoft, DealerCenter, etc.) decodes against.
 export async function decodeVin(vin) {
