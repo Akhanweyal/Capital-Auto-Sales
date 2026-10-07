@@ -23,7 +23,7 @@ import {
   signOut,
 } from "./lib/db.js";
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
-import { decodeVin, isValidVinFormat } from "./lib/vin.js";
+import { decodeVin, isValidVinFormat, isValidVin } from "./lib/vin.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1095,27 +1095,56 @@ function VinScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
   const [err, setErr] = useState("");
+  const [notVin, setNotVin] = useState("");
+  const lastMisreadRef = useRef("");
 
   useEffect(() => {
     let live = true;
-    import("@zxing/browser").then(({ BrowserMultiFormatReader }) => {
-      if (!live) return;
-      const reader = new BrowserMultiFormatReader();
-      reader
-        .decodeFromConstraints({ video: { facingMode: "environment" } }, videoRef.current, (result) => {
-          if (!live || !result) return;
-          const text = result.getText().trim().toUpperCase();
-          if (isValidVinFormat(text)) {
-            controlsRef.current && controlsRef.current.stop();
-            onDetect(text);
-          }
-        })
-        .then((controls) => {
-          if (!live) controls.stop();
-          else controlsRef.current = controls;
-        })
-        .catch(() => live && setErr("Couldn't reach the camera. Check permissions, or type the VIN instead."));
-    });
+    Promise.all([import("@zxing/browser"), import("@zxing/library")]).then(
+      ([{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }]) => {
+        if (!live) return;
+        // VIN barcodes are Code 39 per the automotive (AIAG) standard; some
+        // dealer-installed window-sticker systems use Code 128 instead.
+        // Narrowing the formats and forcing TRY_HARDER is what makes zxing
+        // reliably read the small, dense bars on a door-jamb sticker.
+        const hints = new Map();
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39, BarcodeFormat.CODE_128]);
+        hints.set(DecodeHintType.TRY_HARDER, true);
+        const reader = new BrowserMultiFormatReader(hints);
+        reader
+          .decodeFromConstraints(
+            {
+              video: {
+                facingMode: "environment",
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+              },
+            },
+            videoRef.current,
+            (result) => {
+              if (!live || !result) return;
+              const text = result.getText().trim().toUpperCase();
+              if (isValidVin(text)) {
+                controlsRef.current && controlsRef.current.stop();
+                onDetect(text);
+                return;
+              }
+              // Decoded *something*, just not a VIN — tell the user instead
+              // of staying silent, but don't spam on repeated frames of the
+              // same wrong barcode.
+              if (text && text !== lastMisreadRef.current) {
+                lastMisreadRef.current = text;
+                setNotVin("That barcode isn't a VIN. Try the driver's door jamb sticker, title, or window sticker.");
+              }
+            }
+          )
+          .then((controls) => {
+            if (!live) controls.stop();
+            else controlsRef.current = controls;
+          })
+          .catch(() => live && setErr("Couldn't reach the camera. Check permissions, or type the VIN instead."));
+      }
+    );
     return () => {
       live = false;
       controlsRef.current && controlsRef.current.stop();
@@ -1135,6 +1164,7 @@ function VinScanner({ onDetect, onClose }) {
         <p className="scan-hint">
           Hold the barcode steady in frame — door jamb sticker, title, or window sticker all work.
         </p>
+        {notVin && !err && <p className="scan-hint warn">{notVin}</p>}
         {err && <p className="err">{err}</p>}
       </div>
     </div>

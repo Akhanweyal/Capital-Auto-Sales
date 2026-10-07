@@ -230,6 +230,7 @@ button{font:inherit;cursor:pointer}
 .scan-head{display:flex;justify-content:space-between;align-items:center}
 .scan-video{width:100%;aspect-ratio:4/3;background:#000;object-fit:cover}
 .scan-hint{color:var(--muted);font-size:13px}
+.scan-hint.warn{color:#b45309}
 
 /* cost & expenses, repeatable line items */
 .cost-section{border-top:1px solid var(--line);margin-top:22px;padding-top:18px}
