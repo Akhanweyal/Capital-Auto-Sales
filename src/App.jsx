@@ -1242,6 +1242,12 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [scanOpen, setScanOpen] = useState(false);
   const [decoding, setDecoding] = useState(false);
   const fileRef = useRef(null);
+  const [auctionUrl, setAuctionUrl] = useState("");
+  const [auctionBusy, setAuctionBusy] = useState(false);
+  const [auctionErr, setAuctionErr] = useState("");
+  const [auctionImages, setAuctionImages] = useState([]);
+  const [auctionSelected, setAuctionSelected] = useState(() => new Set());
+  const [auctionImporting, setAuctionImporting] = useState(false);
 
   const runDecode = async (vin) => {
     if (!isValidVinFormat(vin)) {
@@ -1306,6 +1312,70 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       }
       setUploading((n) => n - 1);
     }
+  };
+
+  const authHeaders = async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data && data.session && data.session.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const findAuctionPhotos = async () => {
+    const url = auctionUrl.trim();
+    if (!url) return;
+    setAuctionBusy(true);
+    setAuctionErr("");
+    setAuctionImages([]);
+    setAuctionSelected(new Set());
+    try {
+      const headers = await authHeaders();
+      const r = await fetch(`/api/auction-photos?url=${encodeURIComponent(url)}`, { headers });
+      const data = await r.json();
+      if (!r.ok) {
+        setAuctionErr(data.error || "Couldn't check that listing.");
+      } else {
+        setAuctionImages(data.images || []);
+        if (data.error) setAuctionErr(data.error);
+      }
+    } catch (e) {
+      setAuctionErr("Couldn't reach the server. Check your connection and try again.");
+    }
+    setAuctionBusy(false);
+  };
+
+  const toggleAuctionPick = (url) => {
+    setAuctionSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  };
+
+  const importSelectedAuctionPhotos = async () => {
+    const picks = [...auctionSelected].slice(0, 15 - photos.length);
+    if (!picks.length) return;
+    setAuctionImporting(true);
+    const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
+    let failed = 0;
+    for (const url of picks) {
+      try {
+        const r = await fetch("/api/import-photo", { method: "POST", headers, body: JSON.stringify({ url }) });
+        const data = await r.json();
+        if (!r.ok || data.error || !data.url) {
+          failed++;
+          continue;
+        }
+        setPhotos((p) => [...p, { url: data.url, path: data.path }]);
+      } catch (e) {
+        failed++;
+      }
+    }
+    if (failed) notify(`${failed} photo${failed > 1 ? "s" : ""} couldn't be imported.`);
+    setAuctionImages([]);
+    setAuctionSelected(new Set());
+    setAuctionUrl("");
+    setAuctionImporting(false);
   };
 
   const dropPhoto = async (n) => {
@@ -1421,6 +1491,59 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           ))}
         </div>
       )}
+
+      <div className="auction-import">
+        <p className="micro gold">Pull photos from an auction listing</p>
+        <div className="auction-import-row">
+          <input
+            value={auctionUrl}
+            onChange={(e) => setAuctionUrl(e.target.value)}
+            placeholder="Paste the auction lot page link"
+            disabled={auctionBusy || photos.length >= 15}
+          />
+          <button
+            type="button"
+            className="mini"
+            disabled={auctionBusy || !auctionUrl.trim() || photos.length >= 15}
+            onClick={findAuctionPhotos}
+          >
+            {auctionBusy ? "Looking…" : "Find photos"}
+          </button>
+        </div>
+        <p className="scan-hint">
+          Many auction sites need you to be logged in to see photos, so this won't always find
+          them — if it comes up empty, save the photos to your device and use the upload area
+          above instead.
+        </p>
+        {auctionErr && <p className="scan-hint warn">{auctionErr}</p>}
+
+        {auctionImages.length > 0 && (
+          <>
+            <div className="shots auction-pick-grid">
+              {auctionImages.map((url) => (
+                <div
+                  key={url}
+                  className={"shot pick" + (auctionSelected.has(url) ? " picked" : "")}
+                  onClick={() => toggleAuctionPick(url)}
+                >
+                  <img src={url} alt="" loading="lazy" />
+                  <span className="pick-check">{auctionSelected.has(url) ? "✓" : ""}</span>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="mini"
+              disabled={!auctionSelected.size || auctionImporting}
+              onClick={importSelectedAuctionPhotos}
+            >
+              {auctionImporting
+                ? "Adding…"
+                : `Add ${auctionSelected.size || ""} selected photo${auctionSelected.size === 1 ? "" : "s"}`}
+            </button>
+          </>
+        )}
+      </div>
 
       <div className="fields">
         <label>

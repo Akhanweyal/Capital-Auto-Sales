@@ -213,6 +213,17 @@ button{font:inherit;cursor:pointer}
 .shot-acts{position:absolute;inset:auto 0 0 0;display:flex;justify-content:space-between;background:rgba(8,25,46,.8)}
 .shot-acts button{flex:1;background:none;border:0;color:#fff;padding:5px 0;font-size:14px}
 .shot-acts button:hover{background:var(--gold);color:var(--navy-900)}
+
+.auction-import{border-top:1px solid var(--line);margin-top:18px;padding-top:16px}
+.auction-import-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.auction-import-row input{flex:1;min-width:220px}
+.auction-pick-grid{margin-top:12px}
+.shot.pick{cursor:pointer}
+.shot.pick.picked{outline:3px solid var(--gold);outline-offset:-3px}
+.pick-check{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;
+  background:rgba(8,25,46,.75);color:var(--gold);font-size:13px;font-weight:700;
+  display:flex;align-items:center;justify-content:center}
+
 .fields{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px}
 .fields label{display:flex;flex-direction:column;gap:6px}
 .fields label.full{grid-column:1/-1}
