@@ -1094,9 +1094,34 @@ function LineItems({ items, onChange, addLabel }) {
 function VinScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
+  const readerRef = useRef(null);
+  const fileRef = useRef(null);
   const [err, setErr] = useState("");
   const [notVin, setNotVin] = useState("");
+  const [busy, setBusy] = useState(false);
   const lastMisreadRef = useRef("");
+
+  // Kept in refs (not effect deps) so a parent re-render while the modal is
+  // open — e.g. the VIN-field's own onChange — can't tear down and restart
+  // the live camera stream mid-scan.
+  const onDetectRef = useRef(onDetect);
+  onDetectRef.current = onDetect;
+  const handleResultRef = useRef();
+  handleResultRef.current = (text) => {
+    if (isValidVin(text)) {
+      controlsRef.current && controlsRef.current.stop();
+      onDetectRef.current(text);
+      return;
+    }
+    // Decoded *something*, just not a VIN — tell the user instead of staying
+    // silent, but don't spam on repeated frames/attempts of the same miss.
+    if (text && text !== lastMisreadRef.current) {
+      lastMisreadRef.current = text;
+      setNotVin("That barcode isn't a VIN. Try the driver's door jamb sticker, title, or window sticker.");
+    } else if (!text) {
+      setNotVin("Couldn't find a barcode in that photo. Try a closer, sharper, glare-free shot.");
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -1111,6 +1136,7 @@ function VinScanner({ onDetect, onClose }) {
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39, BarcodeFormat.CODE_128]);
         hints.set(DecodeHintType.TRY_HARDER, true);
         const reader = new BrowserMultiFormatReader(hints);
+        readerRef.current = reader;
         reader
           .decodeFromConstraints(
             {
@@ -1123,19 +1149,7 @@ function VinScanner({ onDetect, onClose }) {
             videoRef.current,
             (result) => {
               if (!live || !result) return;
-              const text = result.getText().trim().toUpperCase();
-              if (isValidVin(text)) {
-                controlsRef.current && controlsRef.current.stop();
-                onDetect(text);
-                return;
-              }
-              // Decoded *something*, just not a VIN — tell the user instead
-              // of staying silent, but don't spam on repeated frames of the
-              // same wrong barcode.
-              if (text && text !== lastMisreadRef.current) {
-                lastMisreadRef.current = text;
-                setNotVin("That barcode isn't a VIN. Try the driver's door jamb sticker, title, or window sticker.");
-              }
+              handleResultRef.current(result.getText().trim().toUpperCase());
             }
           )
           .then((controls) => {
@@ -1149,7 +1163,23 @@ function VinScanner({ onDetect, onClose }) {
       live = false;
       controlsRef.current && controlsRef.current.stop();
     };
-  }, [onDetect]);
+  }, []);
+
+  const scanPhoto = async (file) => {
+    if (!file || !readerRef.current) return;
+    setErr("");
+    setBusy(true);
+    const url = URL.createObjectURL(file);
+    try {
+      const result = await readerRef.current.decodeFromImageUrl(url);
+      handleResultRef.current(result.getText().trim().toUpperCase());
+    } catch (e) {
+      handleResultRef.current("");
+    } finally {
+      URL.revokeObjectURL(url);
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="scan-modal" onClick={onClose}>
@@ -1164,6 +1194,26 @@ function VinScanner({ onDetect, onClose }) {
         <p className="scan-hint">
           Hold the barcode steady in frame — door jamb sticker, title, or window sticker all work.
         </p>
+        <button
+          type="button"
+          className="mini"
+          disabled={busy}
+          onClick={() => fileRef.current && fileRef.current.click()}
+        >
+          {busy ? "Reading photo…" : "Camera won't lock on? Take a photo instead"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files && e.target.files[0];
+            e.target.value = "";
+            if (f) scanPhoto(f);
+          }}
+        />
         {notVin && !err && <p className="scan-hint warn">{notVin}</p>}
         {err && <p className="err">{err}</p>}
       </div>
