@@ -190,6 +190,7 @@ button{font:inherit;cursor:pointer}
 .chip-live{background:#10402A;color:#8FE3B4;border-color:#10402A}
 .chip-sold{background:var(--navy-900);color:var(--gold);border-color:var(--navy-900)}
 .chip-feat{background:var(--gold);color:var(--navy-900);border-color:var(--gold)}
+.chip-warn{background:#FBEFE0;color:#8A5A0A;border-color:#8A5A0A}
 .row-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .mini{background:#fff;border:1px solid var(--line);padding:8px 12px;font-family:var(--cond);text-transform:uppercase;
   letter-spacing:.12em;font-size:12px;font-weight:600;color:var(--navy-700);border-radius:2px;display:inline-block}
@@ -303,13 +304,37 @@ button{font:inherit;cursor:pointer}
 .doc-settlement .doc-row{display:flex;justify-content:space-between;font-size:12px;padding:2px 0}
 .doc-row.strong{border-top:1px solid #ccc;margin-top:3px;padding-top:4px;font-weight:700}
 .doc-row.big{font-size:14px}
-.doc-asis{border:1px solid #111;padding:10px 12px;margin-top:14px;font-size:11px}
-.doc-sign-line{display:block;margin-top:10px}
-.doc-noliab{text-align:center;border:1px solid #111;padding:8px;margin-top:12px;font-weight:700;letter-spacing:.06em}
+.doc-warranty{border:1px solid #111;padding:10px 12px;margin-top:14px;font-size:14px;font-weight:700}
+.doc-warranty-type{font-size:15px;margin:0 0 6px;text-decoration:underline}
+.doc-financing{border:1px solid #111;padding:10px 12px;margin-top:12px;font-size:9px;font-weight:700;line-height:1.5}
+.doc-sign-line{display:block;margin-top:10px;font-weight:400}
+/* MVDB-44: "NO LIABILITY INSURANCE INCLUDED" must be boldface, no smaller
+   than 18-point type, printed on the face of the buyer's order. */
+.doc-noliab{text-align:center;border:1px solid #111;padding:8px;margin-top:12px;font-weight:700;letter-spacing:.06em;font-size:24px}
 .doc-legal{font-size:10px;color:#333;margin-top:10px}
 .doc-signatures{display:flex;justify-content:space-between;gap:16px;margin-top:22px;flex-wrap:wrap}
 .doc-signatures>div{flex:1;min-width:180px}
 .doc-foot{text-align:center;font-size:10px;color:#555;margin-top:18px;border-top:1px solid #ccc;padding-top:6px}
+
+/* printable buyer's guide */
+.buyers-guide{font-size:11px}
+.bg-important{font-weight:700;border-bottom:1px solid #111;padding-bottom:8px;margin-bottom:10px}
+.bg-vehicle-row{display:flex;gap:18px;flex-wrap:wrap;font-size:10px;font-weight:700;border-bottom:1px solid #111;padding-bottom:6px;margin-bottom:8px}
+.bg-section-title{font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px;border-bottom:1px solid #111;padding-bottom:3px}
+.bg-option{border-bottom:1px dashed #999;padding:6px 0}
+.bg-option strong{font-size:14px}
+.bg-option.bg-checked{background:#F5F0E0}
+.bg-bold{font-weight:700;margin-top:8px}
+.bg-defects{margin-top:12px;page-break-before:always}
+.bg-defects-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;font-size:10px}
+.bg-defects-grid strong{display:block;margin-top:6px;font-size:10px}
+.bg-defects-grid p{margin:2px 0 4px}
+
+/* printable "not ready for sale" lot tag */
+.tag-doc{font-family:var(--display);text-align:center;padding:40px 24px}
+.tag-doc h2{font-size:34px;border:4px solid #111;padding:20px;margin-bottom:18px}
+.tag-doc p{font-size:16px;margin:6px 0}
+.tag-doc .tag-vin{font-family:var(--cond);font-size:14px;letter-spacing:.08em;margin-top:18px;color:#444}
 
 @media print{
   body *{visibility:hidden}

@@ -67,11 +67,10 @@ export async function fetchDocuments(filters = {}) {
   return data;
 }
 
-export async function deleteDocument(doc) {
-  await supabase.storage.from(BUCKET).remove([doc.path]).catch(() => {});
-  const { error } = await supabase.from("documents").delete().eq("id", doc.id);
-  if (error) throw error;
-}
+// No deleteDocument export, deliberately: the RLS policy on both the
+// documents table and the car-documents bucket only grants select/insert,
+// so a delete call would fail anyway. Once a document is archived, it stays
+// archived — that's the point, for a dealer-board inquiry.
 
 export async function signedDocUrl(path, expiresIn = 300) {
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresIn);

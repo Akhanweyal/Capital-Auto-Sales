@@ -26,6 +26,14 @@ const fromRow = (r) => ({
   featured: !!r.featured,
   cover: r.cover_url || "",
   photos: Array.isArray(r.photos) ? r.photos : [],
+  stage: r.stage || "intake",
+  safetyInspected: !!r.safety_inspected,
+  safetyInspectedDate: r.safety_inspected_date || "",
+  warrantyType: r.warranty_type || "as_is",
+  warrantySystems: r.warranty_systems || "",
+  warrantyDuration: r.warranty_duration || "",
+  warrantyPctLabor: Number(r.warranty_pct_labor) || 0,
+  warrantyPctParts: Number(r.warranty_pct_parts) || 0,
   createdAt: new Date(r.created_at).getTime(),
 });
 
@@ -45,6 +53,14 @@ const toRow = (c) => ({
   featured: !!c.featured,
   cover_url: c.photos && c.photos[0] ? c.photos[0].url : "",
   photos: c.photos || [],
+  stage: c.stage || "intake",
+  safety_inspected: !!c.safetyInspected,
+  safety_inspected_date: c.safetyInspectedDate || null,
+  warranty_type: c.warrantyType || "as_is",
+  warranty_systems: c.warrantySystems || "",
+  warranty_duration: c.warrantyDuration || "",
+  warranty_pct_labor: Number(c.warrantyPctLabor) || 0,
+  warranty_pct_parts: Number(c.warrantyPctParts) || 0,
 });
 
 /* ---------- cars ---------- */
@@ -89,6 +105,14 @@ export async function updateCar(id, patch) {
     sold: "sold",
     pending: "pending",
     featured: "featured",
+    stage: "stage",
+    safetyInspected: "safety_inspected",
+    safetyInspectedDate: "safety_inspected_date",
+    warrantyType: "warranty_type",
+    warrantySystems: "warranty_systems",
+    warrantyDuration: "warranty_duration",
+    warrantyPctLabor: "warranty_pct_labor",
+    warrantyPctParts: "warranty_pct_parts",
   };
   for (const k of Object.keys(patch)) if (map[k]) row[map[k]] = patch[k];
   if (patch.photos) {

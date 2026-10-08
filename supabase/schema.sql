@@ -85,6 +85,46 @@ create table if not exists public.sales (
   created_at timestamptz not null default now()
 );
 
+-- ---------- lifecycle stage + warranty disclosure + inspection, added to
+-- the already-existing cars/sales tables. Uses ALTER ... ADD COLUMN IF NOT
+-- EXISTS rather than the CREATE TABLE blocks above, since those only run on
+-- a brand-new table and this dealer's cars/sales tables already exist.
+--
+-- stage tracks the pre-listing workflow (buy -> recon -> ready -> listed);
+-- published/pending/sold keep driving "is this for sale / sold" exactly as
+-- they already did, nothing about that changes.
+alter table public.cars add column if not exists stage text not null default 'intake';
+-- 'intake' | 'recon' | 'ready' | 'listed' (kept in sync with published) | 'sold' (kept in sync)
+
+-- Virginia law requires every vehicle be safety-inspected between intake and
+-- retail sale, with a written disclosure to the buyer if it wasn't. This is
+-- what gates a car out of 'recon' into 'ready'.
+alter table public.cars add column if not exists safety_inspected      boolean not null default false;
+alter table public.cars add column if not exists safety_inspected_date date;
+
+-- Warranty terms disclosed while the car is listed (what the printed Buyer's
+-- Guide on the vehicle says) — copied onto the sale record at time of sale
+-- so historical sales keep the terms that actually applied, even if the
+-- car's own listing terms are later changed for the next buyer.
+alter table public.cars add column if not exists warranty_type        text    not null default 'as_is';
+-- 'as_is' | 'dealer_full' | 'dealer_limited' | 'implied_only'
+alter table public.cars add column if not exists warranty_systems     text    default '';
+alter table public.cars add column if not exists warranty_duration    text    default '';
+alter table public.cars add column if not exists warranty_pct_labor   numeric default 0;
+alter table public.cars add column if not exists warranty_pct_parts   numeric default 0;
+
+alter table public.sales add column if not exists warranty_type              text    not null default 'as_is';
+alter table public.sales add column if not exists warranty_systems           text    default '';
+alter table public.sales add column if not exists warranty_duration         text    default '';
+alter table public.sales add column if not exists warranty_pct_labor        numeric default 0;
+alter table public.sales add column if not exists warranty_pct_parts        numeric default 0;
+-- Required line item (MVDB-44) that wasn't in the original fee set.
+alter table public.sales add column if not exists uninsured_motor_vehicle_fee numeric not null default 0;
+-- Code of Virginia requires the Buyer's Guide be signed/dated by the buyer
+-- and incorporated into the buyer's order — this tracks that the signed
+-- paper copy has actually been collected, not just printed.
+alter table public.sales add column if not exists buyers_guide_signed       boolean not null default false;
+
 -- ---------- compliance documents: bill of sale, title, repair receipts,
 -- buyer's orders, condition reports — whatever a dealer-board inquiry might
 -- ask for. car_id/sale_id are "on delete set null" (not cascade) and vin/
@@ -158,12 +198,21 @@ create policy "dealer manages sales"
   using (true) with check (true);
 
 -- Compliance documents are never public — same "no anon policy at all" rule
--- as car_costs/sales above.
+-- as car_costs/sales above. Deliberately no DELETE policy at all (and no
+-- UPDATE either, so a row can't be edited after the fact): once a document
+-- is on file, it stays on file for a dealer-board inquiry. Insert/select
+-- only.
 drop policy if exists "dealer manages documents" on public.documents;
-create policy "dealer manages documents"
-  on public.documents for all
+drop policy if exists "dealer reads documents" on public.documents;
+drop policy if exists "dealer adds documents" on public.documents;
+create policy "dealer reads documents"
+  on public.documents for select
   to authenticated
-  using (true) with check (true);
+  using (true);
+create policy "dealer adds documents"
+  on public.documents for insert
+  to authenticated
+  with check (true);
 
 -- ---------- photo storage ----------
 insert into storage.buckets (id, name, public)
@@ -189,8 +238,16 @@ insert into storage.buckets (id, name, public)
 values ('car-documents', 'car-documents', false)
 on conflict (id) do nothing;
 
+-- Same immutability rule as the documents table: select/insert only, no
+-- delete or overwrite once a file is uploaded.
 drop policy if exists "dealer manages document storage" on storage.objects;
-create policy "dealer manages document storage"
-  on storage.objects for all
+drop policy if exists "dealer reads document storage" on storage.objects;
+drop policy if exists "dealer adds document storage" on storage.objects;
+create policy "dealer reads document storage"
+  on storage.objects for select
   to authenticated
-  using (bucket_id = 'car-documents') with check (bucket_id = 'car-documents');
+  using (bucket_id = 'car-documents');
+create policy "dealer adds document storage"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'car-documents');

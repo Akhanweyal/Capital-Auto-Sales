@@ -23,6 +23,7 @@ export function saleTotals(s) {
     num(s.highway_use_fee) +
     num(s.dealer_biz_tax) +
     num(s.online_filing_fee) +
+    num(s.uninsured_motor_vehicle_fee) +
     otherChargesTotal;
   const totalDue = subtotal + taxesFeesTotal;
   const totalCredit = num(s.deposit) + num(s.down_payment);
@@ -114,6 +115,13 @@ export const BLANK_SALE = {
   payment_type: "cash",
   car_cost: 0,
   car_expenses: [],
+  uninsured_motor_vehicle_fee: 0,
+  warranty_type: "as_is",
+  warranty_systems: "",
+  warranty_duration: "",
+  warranty_pct_labor: 0,
+  warranty_pct_parts: 0,
+  buyers_guide_signed: false,
   finalized: false,
 };
 

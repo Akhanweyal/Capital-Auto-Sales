@@ -25,7 +25,7 @@ import {
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
-import { DOC_CATEGORIES, uploadDocument, fetchDocuments, deleteDocument, signedDocUrl } from "./lib/documents.js";
+import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -557,6 +557,9 @@ function CarPage({ car, ready, go }) {
                 <em>VIN</em> {car.vin}
               </p>
             )}
+            <p className="vin">
+              <em>Warranty</em> {WARRANTY_TYPES.find((w) => w.value === car.warrantyType)?.label || "AS IS — no dealer warranty"}
+            </p>
           </div>
         </div>
 
@@ -1000,13 +1003,28 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
                   <span className="chip">Draft</span>
                 )}
                 {c.featured && !c.sold && <span className="chip chip-feat">Featured</span>}
+                {!c.sold && !c.published && c.stage !== "listed" && (
+                  <span className="chip">{STAGES.find((st) => st.value === c.stage)?.label || c.stage}</span>
+                )}
+                {!c.sold && !c.safetyInspected && <span className="chip chip-warn">Not inspected</span>}
               </div>
             </div>
             <div className="row-acts">
               <button
                 className="mini"
                 onClick={() => {
-                  patch(c, { published: !c.published });
+                  if (
+                    !c.published &&
+                    !c.safetyInspected &&
+                    !window.confirm(
+                      "This car hasn't been marked as safety-inspected yet. Virginia law requires a safety " +
+                        "inspection before retail sale (or a written disclosure to the buyer that it didn't " +
+                        "pass). Publish anyway?"
+                    )
+                  ) {
+                    return;
+                  }
+                  patch(c, { published: !c.published, stage: !c.published ? "listed" : c.stage });
                   notify(c.published ? "Taken off the website." : "Published to the website.");
                 }}
               >
@@ -1015,7 +1033,7 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
               <button
                 className="mini"
                 onClick={() => {
-                  patch(c, { sold: !c.sold });
+                  patch(c, { sold: !c.sold, stage: !c.sold ? "sold" : c.stage === "sold" ? "listed" : c.stage });
                   notify(c.sold ? "Marked available again." : "Marked sold.");
                 }}
               >
@@ -1063,7 +1081,30 @@ const BLANK = {
   description: "",
   vin: "",
   featured: false,
+  stage: "intake",
+  safetyInspected: false,
+  safetyInspectedDate: "",
+  warrantyType: "as_is",
+  warrantySystems: "",
+  warrantyDuration: "",
+  warrantyPctLabor: "",
+  warrantyPctParts: "",
 };
+
+const STAGES = [
+  { value: "intake", label: "Intake — just acquired" },
+  { value: "recon", label: "Recon — not ready for sale" },
+  { value: "ready", label: "Ready for sale" },
+  { value: "listed", label: "Listed" },
+  { value: "sold", label: "Sold" },
+];
+
+const WARRANTY_TYPES = [
+  { value: "as_is", label: "AS IS — no dealer warranty" },
+  { value: "dealer_full", label: "Dealer warranty — full" },
+  { value: "dealer_limited", label: "Dealer warranty — limited" },
+  { value: "implied_only", label: "Implied warranties only" },
+];
 
 /* ---------- repeatable {label, amount} rows — used for car expenses and buyer's-order line items ---------- */
 function LineItems({ items, onChange, addLabel }) {
@@ -1280,15 +1321,6 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
     setBusy(false);
   };
 
-  const remove = async (doc) => {
-    try {
-      await deleteDocument(doc);
-      setDocs((d) => d.filter((x) => x.id !== doc.id));
-    } catch (e) {
-      notify("Couldn't delete that document.");
-    }
-  };
-
   const view = async (doc) => {
     try {
       const url = await signedDocUrl(doc.path);
@@ -1301,6 +1333,7 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
   return (
     <div className="docs-panel">
       <p className="micro gold">Documents</p>
+      <p className="scan-hint">Permanent once added — there's no delete, by design, for a dealer-board inquiry.</p>
       <div className="docs-add-row">
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
           {DOC_CATEGORIES.map((c) => (
@@ -1349,9 +1382,6 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
               <button type="button" className="linkish" onClick={() => view(d)}>
                 View
               </button>
-              <button type="button" className="linkish danger" onClick={() => remove(d)}>
-                Delete
-              </button>
             </li>
           ))}
         </ul>
@@ -1381,7 +1411,14 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [docBusy, setDocBusy] = useState(false);
   const [docPreview, setDocPreview] = useState("");
   const [docsRefreshToken, setDocsRefreshToken] = useState(0);
+  const [printDoc, setPrintDoc] = useState(null); // null | 'buyersGuide' | 'notReady'
   const docFileRef = useRef(null);
+
+  useEffect(() => {
+    if (!printDoc) return;
+    const t = setTimeout(() => window.print(), 50);
+    return () => clearTimeout(t);
+  }, [printDoc]);
 
   const runDecode = async (vin) => {
     if (!isValidVinFormat(vin)) {
@@ -1823,6 +1860,81 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       {scanOpen && <VinScanner onDetect={handleScanned} onClose={() => setScanOpen(false)} />}
 
       <div className="cost-section">
+        <p className="micro gold">Listing readiness &amp; warranty disclosure</p>
+        <div className="fields">
+          <label>
+            <span>Stage</span>
+            <select value={v.stage} onChange={set("stage")}>
+              {STAGES.map((st) => (
+                <option key={st.value} value={st.value}>
+                  {st.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={!!v.safetyInspected} onChange={set("safetyInspected")} />
+            <span>Passed VA safety inspection</span>
+          </label>
+          {v.safetyInspected && (
+            <label>
+              <span>Inspection date</span>
+              <input type="date" value={v.safetyInspectedDate} onChange={set("safetyInspectedDate")} />
+            </label>
+          )}
+          <label>
+            <span>Warranty (for the Buyer's Guide)</span>
+            <select value={v.warrantyType} onChange={set("warrantyType")}>
+              {WARRANTY_TYPES.map((w) => (
+                <option key={w.value} value={w.value}>
+                  {w.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {v.warrantyType === "dealer_limited" && (
+            <>
+              <label>
+                <span>% of labor dealer pays</span>
+                <input value={v.warrantyPctLabor} onChange={set("warrantyPctLabor")} inputMode="numeric" />
+              </label>
+              <label>
+                <span>% of parts dealer pays</span>
+                <input value={v.warrantyPctParts} onChange={set("warrantyPctParts")} inputMode="numeric" />
+              </label>
+            </>
+          )}
+          {(v.warrantyType === "dealer_full" || v.warrantyType === "dealer_limited") && (
+            <>
+              <label>
+                <span>Systems covered</span>
+                <input value={v.warrantySystems} onChange={set("warrantySystems")} placeholder="Engine, transmission" />
+              </label>
+              <label>
+                <span>Duration</span>
+                <input value={v.warrantyDuration} onChange={set("warrantyDuration")} placeholder="30 days / 1,000 miles" />
+              </label>
+            </>
+          )}
+        </div>
+        {v.stage !== "listed" && v.stage !== "sold" && !v.safetyInspected && (
+          <p className="scan-hint warn">
+            Virginia law requires a safety inspection between intake and retail sale — this car can't
+            honestly move to "Ready for sale" until that's checked off (or a written not-passed
+            disclosure is given to the buyer instead).
+          </p>
+        )}
+        <div className="docs-add-row" style={{ marginTop: 10 }}>
+          <button type="button" className="mini" onClick={() => setPrintDoc("buyersGuide")}>
+            Print Buyer's Guide
+          </button>
+          <button type="button" className="mini" onClick={() => setPrintDoc("notReady")}>
+            Print "Not Ready" lot tag
+          </button>
+        </div>
+      </div>
+
+      <div className="cost-section">
         <p className="micro gold">Cost &amp; expenses — private, never shown on the website</p>
         <div className="fields">
           <label>
@@ -1870,6 +1982,20 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           Cancel
         </button>
       </div>
+
+      {printDoc === "buyersGuide" && (
+        <BuyerGuideDocument
+          vehicle={v}
+          warranty={{
+            type: v.warrantyType,
+            systems: v.warrantySystems,
+            duration: v.warrantyDuration,
+            pctLabor: v.warrantyPctLabor,
+            pctParts: v.warrantyPctParts,
+          }}
+        />
+      )}
+      {printDoc === "notReady" && <NotReadyTag car={v} />}
     </div>
   );
 }
@@ -2147,7 +2273,14 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
   const [s, setS] = useState(() => (existing ? { ...BLANK_SALE, ...existing } : { ...BLANK_SALE }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [printDoc, setPrintDoc] = useState(null); // null | 'buyersOrder' | 'buyersGuide'
   const startedFromCar = useRef(false);
+
+  useEffect(() => {
+    if (!printDoc) return;
+    const t = setTimeout(() => window.print(), 50);
+    return () => clearTimeout(t);
+  }, [printDoc]);
 
   const pickCar = useCallback((car) => {
     setS((prev) => ({
@@ -2155,6 +2288,14 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
       car_id: car.id,
       vehicle: { ...prev.vehicle, year: car.year, make: car.make, model: car.model, trim: car.trim || "", vin: car.vin || "", mileage: car.mileage },
       vehicle_price: car.price,
+      // Freeze the car's current disclosed warranty terms onto this sale —
+      // if the terms change later for the next buyer, this sale keeps what
+      // actually applied at the time.
+      warranty_type: car.warrantyType || "as_is",
+      warranty_systems: car.warrantySystems || "",
+      warranty_duration: car.warrantyDuration || "",
+      warranty_pct_labor: car.warrantyPctLabor || 0,
+      warranty_pct_parts: car.warrantyPctParts || 0,
     }));
     fetchCarCost(car.id)
       .then((c) => {
@@ -2179,7 +2320,8 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     setS((prev) => (Number(prev.sales_tax) === tax ? prev : { ...prev, sales_tax: tax }));
   }, [s.vehicle_price, s.processing_fee, s.gross_trade_allowance, s.trade_payoff]);
 
-  const set = (path) => (e) => setS((prev) => setPath(prev, path, e.target.value));
+  const set = (path) => (e) =>
+    setS((prev) => setPath(prev, path, e.target.type === "checkbox" ? e.target.checked : e.target.value));
   const totals = saleTotals(s);
 
   const buildPayload = () => ({
@@ -2211,6 +2353,13 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     payment_type: s.payment_type,
     car_cost: Number(s.car_cost) || 0,
     car_expenses: s.car_expenses,
+    uninsured_motor_vehicle_fee: Number(s.uninsured_motor_vehicle_fee) || 0,
+    warranty_type: s.warranty_type || "as_is",
+    warranty_systems: s.warranty_systems || "",
+    warranty_duration: s.warranty_duration || "",
+    warranty_pct_labor: Number(s.warranty_pct_labor) || 0,
+    warranty_pct_parts: Number(s.warranty_pct_parts) || 0,
+    buyers_guide_signed: !!s.buyers_guide_signed,
   });
 
   const save = async (finalize) => {
@@ -2545,6 +2694,14 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
             <input value={s.registration_fee} onChange={set("registration_fee")} inputMode="numeric" />
           </label>
           <label>
+            <span>Uninsured motor vehicle fee</span>
+            <input
+              value={s.uninsured_motor_vehicle_fee}
+              onChange={set("uninsured_motor_vehicle_fee")}
+              inputMode="numeric"
+            />
+          </label>
+          <label>
             <span>Highway use fee</span>
             <input value={s.highway_use_fee} onChange={set("highway_use_fee")} inputMode="numeric" />
           </label>
@@ -2602,6 +2759,59 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
       </div>
 
       <div className="cost-section">
+        <p className="micro gold">Warranty disclosed to this buyer</p>
+        <p className="scan-hint">
+          Pulled in from the car's listing terms when you picked the vehicle — adjust here if this
+          particular sale's terms are different. This drives both the Buyer's Order's warranty
+          clause and the printable Buyer's Guide below.
+        </p>
+        <div className="fields">
+          <label>
+            <span>Warranty</span>
+            <select value={s.warranty_type} onChange={set("warranty_type")}>
+              {WARRANTY_TYPES.map((w) => (
+                <option key={w.value} value={w.value}>
+                  {w.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {s.warranty_type === "dealer_limited" && (
+            <>
+              <label>
+                <span>% of labor dealer pays</span>
+                <input value={s.warranty_pct_labor} onChange={set("warranty_pct_labor")} inputMode="numeric" />
+              </label>
+              <label>
+                <span>% of parts dealer pays</span>
+                <input value={s.warranty_pct_parts} onChange={set("warranty_pct_parts")} inputMode="numeric" />
+              </label>
+            </>
+          )}
+          {(s.warranty_type === "dealer_full" || s.warranty_type === "dealer_limited") && (
+            <>
+              <label>
+                <span>Systems covered</span>
+                <input value={s.warranty_systems} onChange={set("warranty_systems")} placeholder="Engine, transmission" />
+              </label>
+              <label>
+                <span>Duration</span>
+                <input value={s.warranty_duration} onChange={set("warranty_duration")} placeholder="30 days / 1,000 miles" />
+              </label>
+            </>
+          )}
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={!!s.buyers_guide_signed}
+              onChange={set("buyers_guide_signed")}
+            />
+            <span>Signed Buyer's Guide collected and attached</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="cost-section">
         <p className="micro gold">Document archive — buyer's order, odometer disclosure, etc.</p>
         {s.id ? (
           <DocumentsPanel
@@ -2626,15 +2836,21 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
         <button className="btn btn-navy" disabled={busy} onClick={() => save(false)}>
           Save without finalizing
         </button>
-        <button className="linkish" onClick={() => window.print()}>
-          Print / save as PDF
+        <button className="linkish" onClick={() => setPrintDoc("buyersOrder")}>
+          Print Buyer's Order
+        </button>
+        <button className="linkish" onClick={() => setPrintDoc("buyersGuide")}>
+          Print Buyer's Guide
         </button>
         <button className="linkish" onClick={onCancel}>
           Cancel
         </button>
       </div>
 
-      <SaleDocument s={s} totals={totals} />
+      {printDoc === "buyersOrder" && <SaleDocument s={s} totals={totals} />}
+      {printDoc === "buyersGuide" && (
+        <BuyerGuideDocument vehicle={s.vehicle} warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }} />
+      )}
     </div>
   );
 }
@@ -2647,6 +2863,24 @@ function Row({ label, value, strong, big }) {
     </div>
   );
 }
+
+// MVDB-44: a fee that was never charged must show literally "NONE", not a
+// blank or $0.00.
+function FeeRow({ label, value, strong }) {
+  return (
+    <div className={"doc-row" + (strong ? " strong" : "")}>
+      <span>{label}</span>
+      <span>{Number(value) ? moneyCents(value) : "NONE"}</span>
+    </div>
+  );
+}
+
+const WARRANTY_DOC_LABEL = {
+  as_is: "AS IS — NO DEALER WARRANTY",
+  dealer_full: "DEALER WARRANTY — FULL",
+  dealer_limited: "DEALER WARRANTY — LIMITED",
+  implied_only: "IMPLIED WARRANTIES ONLY",
+};
 
 function SaleDocument({ s, totals }) {
   const v = s.vehicle || {};
@@ -2766,7 +3000,7 @@ function SaleDocument({ s, totals }) {
           <section className="doc-settlement">
             <h4>Settlement</h4>
             <Row label="Vehicle price" value={s.vehicle_price} />
-            <Row label="Processing fee" value={s.processing_fee} />
+            <FeeRow label="Processing fee" value={s.processing_fee} />
             <Row label="Cash price" value={totals.cashPrice} strong />
             <Row label="Gross trade-in allowance" value={s.gross_trade_allowance} />
             <Row label="Less payoff" value={s.trade_payoff} />
@@ -2776,8 +3010,9 @@ function SaleDocument({ s, totals }) {
             <Row label="License fee" value={s.license_fee} />
             <Row label="Title fee" value={s.title_fee} />
             <Row label="Registration fee" value={s.registration_fee} />
+            <Row label="Uninsured motor vehicle fee" value={s.uninsured_motor_vehicle_fee} />
             <Row label="Highway use fee" value={s.highway_use_fee} />
-            <Row label="Dealer's business license tax" value={s.dealer_biz_tax} />
+            <FeeRow label="Dealer's business license tax" value={s.dealer_biz_tax} />
             <Row label="On-line systems filing fee" value={s.online_filing_fee} />
             {(s.other_charges || []).map((c, i) => (
               <Row key={i} label={c.label || "Other charge"} value={c.amount} />
@@ -2794,14 +3029,61 @@ function SaleDocument({ s, totals }) {
         </div>
       </div>
 
-      <div className="doc-asis">
-        <p>
-          <strong>FOR "AS IS" SALE ONLY:</strong> I understand that this vehicle is being sold "AS IS" WITH ALL
-          FAULTS, and is not covered by any dealer warranty. I understand that the dealer is not required to
-          make any repairs after I buy this vehicle. I will have to pay for any repairs this vehicle will need.
+      <div className="doc-warranty">
+        <p className="doc-warranty-type">{WARRANTY_DOC_LABEL[s.warranty_type] || WARRANTY_DOC_LABEL.as_is}</p>
+        {s.warranty_type === "as_is" && (
+          // MVDB-44 exact required wording — must be on the front of the
+          // order, bold, 10pt+, and signed by the buyer.
+          <>
+            <p>
+              I understand that this vehicle is being sold "as is" with all faults and is not covered by any
+              dealer warranty. I understand that the dealer is not required to make any repairs after I buy this
+              vehicle. I will have to pay for any repairs this vehicle will need.
+            </p>
+            <p className="doc-sign-line">Date: _______________ Signature: X ___________________________</p>
+          </>
+        )}
+        {(s.warranty_type === "dealer_full" || s.warranty_type === "dealer_limited") && (
+          <p>
+            {s.warranty_type === "dealer_limited" &&
+              `The dealer will pay ${s.warranty_pct_labor || 0}% of labor and ${s.warranty_pct_parts || 0}% of parts for the covered systems that fail during the warranty period. `}
+            Systems covered: {s.warranty_systems || "—"}. Duration: {s.warranty_duration || "—"}. Ask the
+            dealer for a copy of the warranty document.
+          </p>
+        )}
+        {s.warranty_type === "implied_only" && (
+          <p>
+            The dealer doesn't make any promises to fix things that need repair when you buy the vehicle or
+            afterward. Implied warranties under Virginia law may give you some rights to have the dealer take
+            care of serious problems that were not apparent when you bought the vehicle.
+          </p>
+        )}
+        <p className="micro" style={{ marginTop: 6 }}>
+          Buyer's Guide: {s.buyers_guide_signed ? "attached, signed and dated by buyer" : "☐ attach signed, dated copy before delivery"}
         </p>
-        <p className="doc-sign-line">Date: _______________ Signature: X ___________________________</p>
       </div>
+
+      {s.payment_type === "finance" && (
+        <div className="doc-financing">
+          IF YOU ARE FINANCING THIS VEHICLE PLEASE READ THIS NOTICE. YOU ARE PROPOSING TO ENTER INTO A RETAIL
+          INSTALLMENT SALES CONTRACT WITH THE DEALER. PART OF YOUR CONTRACT INVOLVES FINANCING THE PURCHASE OF
+          YOUR VEHICLE. IF YOU ARE FINANCING THIS VEHICLE AND THE DEALER INTENDS TO TRANSFER YOUR FINANCING TO A
+          FINANCE PROVIDER SUCH AS A BANK, CREDIT UNION OR OTHER LENDER, YOUR VEHICLE PURCHASE DEPENDS ON THE
+          FINANCE PROVIDER'S APPROVAL OF YOUR PROPOSED RETAIL INSTALLMENT SALES CONTRACT. IF YOUR RETAIL
+          INSTALLMENT SALES CONTRACT IS APPROVED WITHOUT A CHANGE THAT INCREASES THE COST OR RISK TO YOU OR THE
+          DEALER, YOUR PURCHASE CANNOT BE CANCELLED. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS NOT APPROVED
+          THE DEALER WILL NOTIFY YOU VERBALLY OR IN WRITING. YOU CAN THEN DECIDE TO PAY FOR THE VEHICLE IN SOME
+          OTHER WAY OR YOU OR THE DEALER CAN CANCEL YOUR PURCHASE. IF THE SALE IS CANCELLED, YOU NEED TO RETURN
+          THE VEHICLE TO THE DEALER WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE IN THE SAME CONDITION IT WAS
+          GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR. ANY DOWN PAYMENT OR TRADE-IN YOU GAVE THE DEALER WILL BE
+          RETURNED TO YOU. IF YOU DO NOT RETURN THE VEHICLE WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE OF
+          CANCELLATION, THE DEALER MAY LOCATE THE VEHICLE AND TAKE IT BACK WITHOUT FURTHER NOTICE TO YOU AS LONG
+          AS THE DEALER FOLLOWS THE LAW AND DOES NOT CAUSE A BREACH OF THE PEACE WHEN TAKING THE VEHICLE BACK. IF
+          THE DEALER DOES NOT RETURN YOUR DOWN PAYMENT AND ANY TRADE-IN WHEN THE DEALER GETS THE VEHICLE BACK IN
+          THE SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR, THE DEALER MAY BE LIABLE TO
+          YOU UNDER THE VIRGINIA CONSUMER PROTECTION ACT.
+        </div>
+      )}
 
       <div className="doc-noliab">NO LIABILITY INSURANCE INCLUDED</div>
 
@@ -2829,6 +3111,195 @@ function SaleDocument({ s, totals }) {
       <p className="doc-foot">
         {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 1 of 1
       </p>
+    </div>
+  );
+}
+
+// FTC Used Car Rule Buyers Guide (16 C.F.R. 455) — content reproduced
+// verbatim from the FTC's own fillable PDF (ftc.gov/business-guidance/
+// resources/buyers-guide-fillable-form), auto-filled with this vehicle's
+// warranty terms instead of left for the dealer to hand-write.
+function BuyerGuideDocument({ vehicle, warranty }) {
+  const v = vehicle || {};
+  const w = warranty || {};
+  const type = w.type || "as_is";
+
+  return (
+    <div className="print-area sale-doc buyers-guide">
+      <div className="doc-head">
+        <h2>BUYERS GUIDE</h2>
+      </div>
+      <p className="bg-important">
+        IMPORTANT: Spoken promises are difficult to enforce. Ask the dealer to put all promises in
+        writing. Keep this form.
+      </p>
+      <div className="bg-vehicle-row">
+        <span>VEHICLE MAKE: {v.make}</span>
+        <span>MODEL: {v.model}</span>
+        <span>YEAR: {v.year}</span>
+        <span>VIN: {v.vin}</span>
+      </div>
+
+      <p className="bg-section-title">WARRANTIES FOR THIS VEHICLE:</p>
+
+      <div className={"bg-option" + (type === "as_is" ? " bg-checked" : "")}>
+        <strong>AS IS – NO DEALER WARRANTY</strong>
+        <p>THE DEALER DOES NOT PROVIDE A WARRANTY FOR ANY REPAIRS AFTER SALE.</p>
+      </div>
+
+      <div className={"bg-option" + (type.startsWith("dealer") ? " bg-checked" : "")}>
+        <strong>DEALER WARRANTY</strong>
+        <p>{type === "dealer_full" ? "☑" : "☐"} FULL WARRANTY.</p>
+        <p>
+          {type === "dealer_limited" ? "☑" : "☐"} LIMITED WARRANTY. The dealer will pay{" "}
+          {type === "dealer_limited" ? w.pctLabor || 0 : "____"}% of the labor and{" "}
+          {type === "dealer_limited" ? w.pctParts || 0 : "____"}% of the parts for the covered systems
+          that fail during the warranty period. Ask the dealer for a copy of the warranty, and for any
+          documents that explain warranty coverage, exclusions, and the dealer's repair obligations.
+          Implied warranties under your state's laws may give you additional rights.
+        </p>
+        {type.startsWith("dealer") && (
+          <p>
+            SYSTEMS COVERED: {w.systems || "—"} &nbsp;&nbsp; DURATION: {w.duration || "—"}
+          </p>
+        )}
+      </div>
+
+      <div className={"bg-option" + (type === "implied_only" ? " bg-checked" : "")}>
+        <strong>IMPLIED WARRANTIES ONLY</strong>
+        <p>
+          The dealer doesn't make any promises to fix things that need repair when you buy the vehicle
+          or afterward. But implied warranties under your state's laws may give you some rights to have
+          the dealer take care of serious problems that were not apparent when you bought the vehicle.
+        </p>
+      </div>
+
+      <p className="bg-section-title">NON-DEALER WARRANTIES FOR THIS VEHICLE:</p>
+      <p>☐ MANUFACTURER'S WARRANTY STILL APPLIES. The manufacturer's original warranty has not expired on some components of the vehicle.</p>
+      <p>☐ MANUFACTURER'S USED VEHICLE WARRANTY APPLIES.</p>
+      <p>☐ OTHER USED VEHICLE WARRANTY APPLIES.</p>
+      <p>
+        Ask the dealer for a copy of the warranty document and an explanation of warranty coverage,
+        exclusions, and repair obligations.
+      </p>
+      <p>
+        ☐ SERVICE CONTRACT. A service contract on this vehicle is available for an extra charge. Ask for
+        details about coverage, deductible, price, and exclusions. If you buy a service contract within
+        90 days of your purchase of this vehicle, implied warranties under your state's laws may give you
+        additional rights.
+      </p>
+
+      <p className="bg-bold">ASK THE DEALER IF YOUR MECHANIC CAN INSPECT THE VEHICLE ON OR OFF THE LOT.</p>
+      <p>
+        <strong>OBTAIN A VEHICLE HISTORY REPORT AND CHECK FOR OPEN SAFETY RECALLS.</strong> For
+        information on how to obtain a vehicle history report, visit ftc.gov/usedcars. To check for open
+        safety recalls, visit safercar.gov. You will need the vehicle identification number (VIN) shown
+        above to make the best use of the resources on these sites.
+      </p>
+      <p>
+        <strong>SEE OTHER SIDE</strong> for important additional information, including a list of major
+        defects that may occur in used motor vehicles.
+      </p>
+      <p className="micro">
+        Si el concesionario gestiona la venta en español, pídale una copia de la Guía del Comprador en
+        español.
+      </p>
+
+      <div className="bg-defects">
+        <p className="bg-section-title">Here is a list of some major defects that may occur in used vehicles.</p>
+        <div className="bg-defects-grid">
+          <div>
+            <strong>Frame &amp; Body</strong>
+            <p>Frame—cracks, corrective welds, or rusted through. Dog tracks—bent or twisted frame.</p>
+            <strong>Engine</strong>
+            <p>
+              Oil leakage, excluding normal seepage. Cracked block or head. Belts missing or inoperable.
+              Knocks or misses related to camshaft, lifters and push rods. Abnormal exhaust discharge.
+            </p>
+            <strong>Transmission &amp; Drive Shaft</strong>
+            <p>
+              Improper fluid level or leakage, excluding normal seepage. Cracked or damaged case which is
+              visible. Abnormal noise or vibration. Improper shifting. Manual clutch slips or chatters.
+            </p>
+            <strong>Differential</strong>
+            <p>Improper fluid level or leakage. Cracked or damaged housing which is visible. Abnormal noise or vibration.</p>
+            <strong>Cooling System</strong>
+            <p>Leakage including radiator. Improperly functioning water pump.</p>
+          </div>
+          <div>
+            <strong>Electrical System</strong>
+            <p>Battery leakage. Improperly functioning alternator, generator, battery, or starter.</p>
+            <strong>Fuel System</strong>
+            <p>Visible leakage.</p>
+            <strong>Inoperable Accessories</strong>
+            <p>Gauges or warning devices. Air conditioner. Heater &amp; defroster.</p>
+            <strong>Brake System</strong>
+            <p>
+              Failure warning light broken. Pedal not firm under pressure. Not enough pedal reserve. Does
+              not stop vehicle in straight line. Hoses damaged. Drum or rotor too thin. Lining or pad
+              thickness less than 1/32 inch. Power unit not operating or leaking. Structural or mechanical
+              parts damaged.
+            </p>
+            <strong>Air Bags</strong>
+          </div>
+          <div>
+            <strong>Steering System</strong>
+            <p>
+              Too much free play at steering wheel. Free play in linkage more than 1/4 inch. Steering gear
+              binds or jams. Front wheels aligned improperly. Power unit belts cracked or slipping. Power
+              unit fluid level improper.
+            </p>
+            <strong>Suspension System</strong>
+            <p>
+              Ball joint seals damaged. Structural parts bent or damaged. Stabilizer bar disconnected.
+              Spring broken. Shock absorber mounting loose or leaking. Rubber bushings damaged or missing.
+              Radius rod damaged or missing.
+            </p>
+            <strong>Tires</strong>
+            <p>Tread depth less than 2/32 inch. Sizes mismatched. Visible damage.</p>
+            <strong>Wheels</strong>
+            <p>Visible cracks, damage or repairs. Mounting bolts loose or missing.</p>
+            <strong>Exhaust System</strong>
+            <p>Leakage. Catalytic converter.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="doc-signatures" style={{ marginTop: 18 }}>
+        <div>
+          <p>{DEALER.name}</p>
+          <p>{DEALER.address}, {DEALER.city}</p>
+          <p>{DEALER.phone}</p>
+        </div>
+        <div>
+          <span className="micro">FOR COMPLAINTS AFTER SALE, CONTACT:</span>
+          <p>{DEALER.name} — {DEALER.phone}</p>
+        </div>
+      </div>
+
+      <p className="doc-legal">
+        IMPORTANT: The information on this form is part of any contract to buy this vehicle. Removing
+        this label before consumer purchase (except for the purpose of test-driving) violates federal law
+        (16 C.F.R. 455).
+      </p>
+    </div>
+  );
+}
+
+// Internal lot sign, not a legally-mandated form — just a plain way to keep
+// a not-yet-ready car from getting shown or test-driven by mistake while it
+// sits on the same lot as published inventory.
+function NotReadyTag({ car }) {
+  return (
+    <div className="print-area sale-doc tag-doc">
+      <h2>NOT READY FOR SALE</h2>
+      <p>Do not show or test-drive this vehicle.</p>
+      <p>
+        {car.year} {car.make} {car.model} {car.trim}
+      </p>
+      <p>Status: {STAGES.find((s) => s.value === car.stage)?.label || car.stage}</p>
+      {!car.safetyInspected && <p>Safety inspection: not yet completed</p>}
+      <p className="tag-vin">VIN {car.vin || "—"}</p>
     </div>
   );
 }
