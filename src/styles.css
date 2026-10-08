@@ -325,6 +325,7 @@ button{font:inherit;cursor:pointer}
 .bg-option strong{font-size:14px}
 .bg-option.bg-checked{background:#F5F0E0}
 .bg-bold{font-weight:700;margin-top:8px}
+.bg-ack{font-weight:700;margin-top:16px;border-top:1px solid #111;padding-top:10px}
 .bg-defects{margin-top:12px;page-break-before:always}
 .bg-defects-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;font-size:10px}
 .bg-defects-grid strong{display:block;margin-top:6px;font-size:10px}

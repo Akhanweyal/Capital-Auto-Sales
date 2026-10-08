@@ -2783,18 +2783,20 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
             <span>Registration fee</span>
             <input value={s.registration_fee} onChange={set("registration_fee")} inputMode="numeric" />
           </label>
-          <label>
-            <span>Uninsured motor vehicle fee</span>
-            <input
-              value={s.uninsured_motor_vehicle_fee}
-              onChange={set("uninsured_motor_vehicle_fee")}
-              inputMode="numeric"
-            />
-          </label>
+          <p className="scan-hint" style={{ gridColumn: "1 / -1", marginTop: -8 }}>
+            $30.75 default is for a passenger vehicle 4,000 lbs or less (current VA DMV fee chart).
+            4,001–6,500 lbs is $35.75; pickups 6,501–10,000 lbs are $44.75 — adjust above if this
+            vehicle is heavier.
+          </p>
           <label>
             <span>Highway use fee</span>
             <input value={s.highway_use_fee} onChange={set("highway_use_fee")} inputMode="numeric" />
           </label>
+          <p className="scan-hint" style={{ gridColumn: "1 / -1", marginTop: -8 }}>
+            Only applies to vehicles rated 25+ combined MPG or EVs — not a flat fee. Roughly $7–$132
+            depending on fuel economy for FY26, EVs a flat $135.63. Leave at 0 unless this vehicle
+            qualifies; check dmv.virginia.gov/vehicles/taxes-fees/highway-use for the exact figure.
+          </p>
           <label>
             <span>Dealer's business license tax</span>
             <input value={s.dealer_biz_tax} onChange={set("dealer_biz_tax")} inputMode="numeric" />
@@ -3098,8 +3100,7 @@ function SaleDocument({ s, totals }) {
             <Row label="License fee" value={s.license_fee} />
             <Row label="Title fee" value={s.title_fee} />
             <Row label="Registration fee" value={s.registration_fee} />
-            <Row label="Uninsured motor vehicle fee" value={s.uninsured_motor_vehicle_fee} />
-            <Row label="Highway use fee" value={s.highway_use_fee} />
+            {Number(s.highway_use_fee) > 0 && <Row label="Highway use fee" value={s.highway_use_fee} />}
             <FeeRow label="Dealer's business license tax" value={s.dealer_biz_tax} />
             <Row label="On-line systems filing fee" value={s.online_filing_fee} />
             {(s.other_charges || []).map((c, i) => (
@@ -3364,6 +3365,13 @@ function BuyerGuideDocument({ vehicle, warranty }) {
           <p>{DEALER.name} — {DEALER.phone}</p>
         </div>
       </div>
+
+      {/* Not part of the base federal form — added per Code of Virginia
+          § 46.2-1529.1, which requires the Buyer's Guide be signed and
+          dated by the buyer and incorporated into the buyer's order. */}
+      <p className="bg-ack">I HEREBY ACKNOWLEDGE RECEIPT OF THE BUYERS GUIDE AT THE CLOSING OF THIS SALE.</p>
+      <p className="doc-sign-line">X ___________________________ ___________</p>
+      <p className="micro" style={{ marginTop: -4 }}>CUSTOMER SIGNATURE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; DATE</p>
 
       <p className="doc-legal">
         IMPORTANT: The information on this form is part of any contract to buy this vehicle. Removing

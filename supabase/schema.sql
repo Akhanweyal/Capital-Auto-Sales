@@ -118,7 +118,12 @@ alter table public.sales add column if not exists warranty_systems           tex
 alter table public.sales add column if not exists warranty_duration         text    default '';
 alter table public.sales add column if not exists warranty_pct_labor        numeric default 0;
 alter table public.sales add column if not exists warranty_pct_parts        numeric default 0;
--- Required line item (MVDB-44) that wasn't in the original fee set.
+-- MVDB-44 (rev. 2012) lists this as a required line item, from when VA let
+-- a driver pay $500 at registration instead of carrying insurance. That
+-- option was repealed effective July 1, 2024 — insurance is now mandatory,
+-- so this no longer applies to a normal sale. Column kept (always 0, no
+-- longer shown in the UI or printed order) rather than dropped, in case a
+-- historical record ever needs it.
 alter table public.sales add column if not exists uninsured_motor_vehicle_fee numeric not null default 0;
 -- Code of Virginia requires the Buyer's Guide be signed/dated by the buyer
 -- and incorporated into the buyer's order — this tracks that the signed
