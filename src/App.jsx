@@ -26,6 +26,7 @@ import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
 import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
+import { logTestDrive, fetchTestDrives, markReturned } from "./lib/testDrives.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1439,6 +1440,149 @@ function DocumentsPanel({
   );
 }
 
+/* ---------- Dealer-tag test drive log — one record per trip, per vehicle,
+   for liability if something happens while a car's out on dealer plates. */
+function TestDrivePanel({ carId, vin, vehicle, notify }) {
+  const [trips, setTrips] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    driverName: "",
+    driverLicense: "",
+    driverLicenseState: "VA",
+    driverPhone: "",
+    buyerName: "",
+    dealerTag: "",
+    salesperson: "",
+    notes: "",
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setTrips(await fetchTestDrives(carId));
+    } catch (e) {
+      notify("Couldn't load the test drive log.");
+    }
+    setLoading(false);
+  }, [carId, notify]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const set = (k) => (e) => setForm((prev) => ({ ...prev, [k]: e.target.value }));
+
+  const submit = async () => {
+    if (!form.driverName.trim()) {
+      notify("Add the driver's name first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const trip = await logTestDrive({ carId, vin, vehicle, ...form });
+      setTrips((t) => [trip, ...t]);
+      setForm({
+        driverName: "",
+        driverLicense: "",
+        driverLicenseState: "VA",
+        driverPhone: "",
+        buyerName: "",
+        dealerTag: "",
+        salesperson: "",
+        notes: "",
+      });
+      notify("Test drive logged.");
+    } catch (e) {
+      notify("Couldn't log that test drive. Try again.");
+    }
+    setBusy(false);
+  };
+
+  const returned = async (id) => {
+    try {
+      const trip = await markReturned(id);
+      setTrips((t) => t.map((x) => (x.id === id ? trip : x)));
+    } catch (e) {
+      notify("Couldn't mark that returned.");
+    }
+  };
+
+  return (
+    <div className="docs-panel">
+      <p className="micro gold">Dealer tag test drive log</p>
+      <p className="scan-hint">A record of who drove this vehicle on dealer plates, and when.</p>
+      <div className="fields">
+        <label>
+          <span>Driver name</span>
+          <input value={form.driverName} onChange={set("driverName")} />
+        </label>
+        <label>
+          <span>Driver's license #</span>
+          <input value={form.driverLicense} onChange={set("driverLicense")} />
+        </label>
+        <label>
+          <span>License state</span>
+          <input value={form.driverLicenseState} onChange={set("driverLicenseState")} />
+        </label>
+        <label>
+          <span>Driver phone</span>
+          <input value={form.driverPhone} onChange={set("driverPhone")} />
+        </label>
+        <label>
+          <span>Buyer (if different from driver)</span>
+          <input value={form.buyerName} onChange={set("buyerName")} />
+        </label>
+        <label>
+          <span>Dealer tag #</span>
+          <input value={form.dealerTag} onChange={set("dealerTag")} />
+        </label>
+        <label>
+          <span>Salesperson</span>
+          <input value={form.salesperson} onChange={set("salesperson")} />
+        </label>
+        <label className="full">
+          <span>Notes</span>
+          <input value={form.notes} onChange={set("notes")} placeholder="Accompanied test drive, local roads only, etc." />
+        </label>
+      </div>
+      <button type="button" className="mini" disabled={busy} onClick={submit} style={{ marginTop: 10 }}>
+        {busy ? "Logging…" : "Log test drive"}
+      </button>
+
+      {loading ? (
+        <p className="scan-hint" style={{ marginTop: 12 }}>
+          Loading…
+        </p>
+      ) : trips.length === 0 ? (
+        <p className="scan-hint" style={{ marginTop: 12 }}>
+          No test drives logged yet.
+        </p>
+      ) : (
+        <ul className="docs-list" style={{ marginTop: 12 }}>
+          {trips.map((t) => (
+            <li key={t.id}>
+              <span className="doc-name">
+                {t.driver_name} {t.dealer_tag && `· tag ${t.dealer_tag}`}
+                {t.buyer_name && ` · buyer ${t.buyer_name}`}
+              </span>
+              <span className="doc-date">
+                out {new Date(t.out_at).toLocaleString()}
+                {t.in_at ? ` · back ${new Date(t.in_at).toLocaleString()}` : ""}
+              </span>
+              {!t.in_at && (
+                <button type="button" className="linkish" onClick={() => returned(t.id)}>
+                  Mark returned
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function CarForm({ car, onCancel, onSaved, notify }) {
   const [v, setV] = useState(car ? { ...BLANK, ...car } : BLANK);
   const [photos, setPhotos] = useState(car ? car.photos : []);
@@ -2036,6 +2180,20 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           pendingDocs={pendingDocs}
           onPendingChange={setPendingDocs}
         />
+      </div>
+
+      <div className="cost-section">
+        <p className="micro gold">Test drives — private, never shown on the website</p>
+        {car && car.id ? (
+          <TestDrivePanel
+            carId={car.id}
+            vin={v.vin}
+            vehicle={`${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim()}
+            notify={notify}
+          />
+        ) : (
+          <p className="scan-hint">Save this car once, then come back to log test drives.</p>
+        )}
       </div>
 
       {err && <p className="err">{err}</p>}

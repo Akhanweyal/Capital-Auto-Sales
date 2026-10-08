@@ -130,6 +130,49 @@ alter table public.sales add column if not exists uninsured_motor_vehicle_fee nu
 -- paper copy has actually been collected, not just printed.
 alter table public.sales add column if not exists buyers_guide_signed       boolean not null default false;
 
+-- ---------- dealer-tag test drive log: who drove which vehicle, under which
+-- dealer plate, and when — a record for each vehicle in case of an accident
+-- or liability question while out on dealer tags. Unlike documents, a
+-- correction (fixing a mistyped license number, logging the return time) is
+-- a normal thing to need here, so update is allowed; delete still isn't.
+create table if not exists public.test_drives (
+  id              uuid primary key default gen_random_uuid(),
+  car_id          uuid references public.cars (id) on delete set null,
+  vin             text        default '',
+  vehicle         text        default '',
+  driver_name     text        not null default '',
+  driver_license  text        default '',
+  driver_license_state text   default 'VA',
+  driver_phone    text        default '',
+  buyer_name      text        default '',
+  dealer_tag      text        default '',
+  salesperson     text        default '',
+  notes           text        default '',
+  out_at          timestamptz not null default now(),
+  in_at           timestamptz,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists test_drives_car_id_idx on public.test_drives (car_id);
+
+alter table public.test_drives enable row level security;
+
+drop policy if exists "dealer reads test drives" on public.test_drives;
+drop policy if exists "dealer logs test drives" on public.test_drives;
+drop policy if exists "dealer updates test drives" on public.test_drives;
+create policy "dealer reads test drives"
+  on public.test_drives for select
+  to authenticated
+  using (true);
+create policy "dealer logs test drives"
+  on public.test_drives for insert
+  to authenticated
+  with check (true);
+create policy "dealer updates test drives"
+  on public.test_drives for update
+  to authenticated
+  using (true) with check (true);
+
 -- ---------- compliance documents: bill of sale, title, repair receipts,
 -- buyer's orders, condition reports — whatever a dealer-board inquiry might
 -- ask for. car_id/sale_id are "on delete set null" (not cascade) and vin/
