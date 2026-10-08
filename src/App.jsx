@@ -276,7 +276,7 @@ function SiteFooter({ go }) {
       </div>
       <div className="wrap foot-btm">
         <span>
-          © {new Date().getFullYear()} {DEALER.name}
+          © {new Date().getFullYear()} {DEALER.name}. All rights reserved. Website owned by Ajmal Weyal.
         </span>
         <button className="linkish" onClick={() => go("/admin")}>
           Dealer sign in
