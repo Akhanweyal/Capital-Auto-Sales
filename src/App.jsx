@@ -1282,15 +1282,32 @@ function VinScanner({ onDetect, onClose }) {
    receipts, buyer's orders) — reused on both the car form and the sale
    form, and searchable fleet-wide from the Documents admin tab. Private
    storage: never shown on the public website. ---------- */
-function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other", notify, refreshToken }) {
+function DocumentsPanel({
+  carId,
+  saleId,
+  vin,
+  vehicle,
+  defaultCategory = "other",
+  notify,
+  refreshToken,
+  pendingDocs,
+  onPendingChange,
+}) {
+  // A brand-new, unsaved car/sale has no id yet, so there's nowhere to
+  // attach a document row to. Rather than blocking upload until after save
+  // (the old behavior — confusing, since photos never had that limit),
+  // buffer picked files locally and let the parent upload them once save
+  // gives it a real id, exactly like photos already work.
+  const pendingMode = !carId && !saleId;
   const [docs, setDocs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!pendingMode);
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState(defaultCategory);
   const [label, setLabel] = useState("");
   const fileRef = useRef(null);
 
   const load = useCallback(async () => {
+    if (pendingMode) return;
     setLoading(true);
     try {
       // When a car is known (true for a sale tied to one), scope by car so
@@ -1302,13 +1319,18 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
       notify("Couldn't load documents.");
     }
     setLoading(false);
-  }, [carId, saleId, notify]);
+  }, [carId, saleId, notify, pendingMode]);
 
   useEffect(() => {
     load();
   }, [load, refreshToken]);
 
   const addFile = async (file) => {
+    if (pendingMode) {
+      onPendingChange((prev) => [...prev, { tempId: `${Date.now()}-${Math.random()}`, file, category, label }]);
+      setLabel("");
+      return;
+    }
     setBusy(true);
     try {
       const doc = await uploadDocument(file, { carId, saleId, category, label, vin, vehicle });
@@ -1321,6 +1343,10 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
     setBusy(false);
   };
 
+  const removePending = (tempId) => {
+    onPendingChange((prev) => prev.filter((p) => p.tempId !== tempId));
+  };
+
   const view = async (doc) => {
     try {
       const url = await signedDocUrl(doc.path);
@@ -1330,10 +1356,16 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
     }
   };
 
+  const list = pendingMode ? pendingDocs || [] : docs;
+
   return (
     <div className="docs-panel">
       <p className="micro gold">Documents</p>
-      <p className="scan-hint">Permanent once added — there's no delete, by design, for a dealer-board inquiry.</p>
+      <p className="scan-hint">
+        {pendingMode
+          ? "Attached now, saved once you save this record below."
+          : "Permanent once added — there's no delete, by design, for a dealer-board inquiry."}
+      </p>
       <div className="docs-add-row">
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
           {DOC_CATEGORIES.map((c) => (
@@ -1368,7 +1400,24 @@ function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other"
         />
       </div>
 
-      {loading ? (
+      {pendingMode ? (
+        list.length === 0 ? (
+          <p className="scan-hint">No documents attached yet.</p>
+        ) : (
+          <ul className="docs-list">
+            {list.map((p) => (
+              <li key={p.tempId}>
+                <span className={`doc-tag doc-${p.category}`}>{p.category}</span>
+                <span className="doc-name">{p.label || p.file.name}</span>
+                <span className="doc-date">pending save</span>
+                <button type="button" className="linkish danger" onClick={() => removePending(p.tempId)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : loading ? (
         <p className="scan-hint">Loading…</p>
       ) : docs.length === 0 ? (
         <p className="scan-hint">No documents saved yet.</p>
@@ -1412,6 +1461,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [docPreview, setDocPreview] = useState("");
   const [docsRefreshToken, setDocsRefreshToken] = useState(0);
   const [printDoc, setPrintDoc] = useState(null); // null | 'buyersGuide' | 'notReady'
+  const [pendingDocs, setPendingDocs] = useState([]);
   const docFileRef = useRef(null);
 
   useEffect(() => {
@@ -1471,9 +1521,9 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       }
       // Archive the original file, not just the data pulled from it — a
       // dealer-board inquiry wants the actual document, not just the VIN it
-      // decoded to. Only possible once this car has an id to attach it to;
-      // for a brand-new car, the Documents panel below explains the "save
-      // first" step instead of silently dropping the file.
+      // decoded to. If this car already has an id, save it right away;
+      // otherwise queue it the same way a manually-attached document on a
+      // new car queues, and it gets uploaded once the car is actually saved.
       if (car && car.id) {
         try {
           await uploadDocument(file, {
@@ -1487,6 +1537,11 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         } catch (e) {
           notify("Filled the form, but couldn't save a copy of the document.");
         }
+      } else {
+        setPendingDocs((prev) => [
+          ...prev,
+          { tempId: `${Date.now()}-${Math.random()}`, file, category: "intake", label: "Auction purchase document" },
+        ]);
       }
     } catch (e) {
       notify("Couldn't read that document. Try a clearer photo, or fill the fields by hand.");
@@ -1632,6 +1687,24 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         await upsertCarCost(saved.id, { cost: Number(cost) || 0, expenses });
       } catch (e) {
         notify("Saved the car, but the cost/expenses didn't save. Edit the car again to retry.");
+      }
+      if (pendingDocs.length) {
+        const vehicleLabel = `${payload.year} ${payload.make} ${payload.model}`.trim();
+        let failed = 0;
+        for (const p of pendingDocs) {
+          try {
+            await uploadDocument(p.file, {
+              carId: saved.id,
+              category: p.category,
+              label: p.label,
+              vin: payload.vin,
+              vehicle: vehicleLabel,
+            });
+          } catch (e) {
+            failed++;
+          }
+        }
+        if (failed) notify(`${failed} attached document${failed > 1 ? "s" : ""} couldn't be saved.`);
       }
       onSaved(saved, !car);
     } catch (e) {
@@ -1953,20 +2026,16 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           Document archive — bill of sale, title, repair receipts — private, never shown on the
           website
         </p>
-        {car && car.id ? (
-          <DocumentsPanel
-            carId={car.id}
-            vin={v.vin}
-            vehicle={`${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim()}
-            defaultCategory="intake"
-            notify={notify}
-            refreshToken={docsRefreshToken}
-          />
-        ) : (
-          <p className="scan-hint">
-            Save this car once, then come back and edit it to attach documents.
-          </p>
-        )}
+        <DocumentsPanel
+          carId={car && car.id}
+          vin={v.vin}
+          vehicle={`${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim()}
+          defaultCategory="intake"
+          notify={notify}
+          refreshToken={docsRefreshToken}
+          pendingDocs={pendingDocs}
+          onPendingChange={setPendingDocs}
+        />
       </div>
 
       {err && <p className="err">{err}</p>}
@@ -2274,6 +2343,7 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [printDoc, setPrintDoc] = useState(null); // null | 'buyersOrder' | 'buyersGuide'
+  const [pendingDocs, setPendingDocs] = useState([]);
   const startedFromCar = useRef(false);
 
   useEffect(() => {
@@ -2378,6 +2448,26 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
         } catch (e) {
           notify("Sale saved, but couldn't mark the car sold — do it from Inventory.");
         }
+      }
+      if (pendingDocs.length) {
+        const v = saved.vehicle || {};
+        const vehicleLabel = `${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim();
+        let failed = 0;
+        for (const p of pendingDocs) {
+          try {
+            await uploadDocument(p.file, {
+              saleId: saved.id,
+              carId: saved.car_id || null,
+              category: p.category,
+              label: p.label,
+              vin: v.vin || "",
+              vehicle: vehicleLabel,
+            });
+          } catch (e) {
+            failed++;
+          }
+        }
+        if (failed) notify(`${failed} attached document${failed > 1 ? "s" : ""} couldn't be saved.`);
       }
       onSaved(saved, finalize);
     } catch (e) {
@@ -2813,18 +2903,16 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
 
       <div className="cost-section">
         <p className="micro gold">Document archive — buyer's order, odometer disclosure, etc.</p>
-        {s.id ? (
-          <DocumentsPanel
-            saleId={s.id}
-            carId={s.car_id || null}
-            vin={s.vehicle && s.vehicle.vin}
-            vehicle={s.vehicle && `${s.vehicle.year || ""} ${s.vehicle.make || ""} ${s.vehicle.model || ""}`.trim()}
-            defaultCategory="sale"
-            notify={notify}
-          />
-        ) : (
-          <p className="scan-hint">Save this sale once, then reopen it to attach documents.</p>
-        )}
+        <DocumentsPanel
+          saleId={s.id}
+          carId={s.car_id || null}
+          vin={s.vehicle && s.vehicle.vin}
+          vehicle={s.vehicle && `${s.vehicle.year || ""} ${s.vehicle.make || ""} ${s.vehicle.model || ""}`.trim()}
+          defaultCategory="sale"
+          notify={notify}
+          pendingDocs={pendingDocs}
+          onPendingChange={setPendingDocs}
+        />
       </div>
 
       {err && <p className="err">{err}</p>}
