@@ -25,6 +25,7 @@ import {
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
+import { DOC_CATEGORIES, uploadDocument, fetchDocuments, deleteDocument, signedDocUrl } from "./lib/documents.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -800,6 +801,9 @@ function Admin({ go, say }) {
           <button className={tab === "sales" ? "on" : ""} onClick={() => setTab("sales")}>
             Sales <span className="count">{sales.length}</span>
           </button>
+          <button className={tab === "documents" ? "on" : ""} onClick={() => setTab("documents")}>
+            Documents
+          </button>
         </div>
       </header>
 
@@ -883,6 +887,8 @@ function Admin({ go, say }) {
             }}
           />
         )}
+
+        {!editing && !editingSale && tab === "documents" && <DocumentsAudit notify={notify} />}
       </main>
 
       {toast && <div className="toast">{toast}</div>}
@@ -1231,6 +1237,129 @@ function VinScanner({ onDetect, onClose }) {
   );
 }
 
+/* ---------- Compliance document archive (bill of sale, title, repair
+   receipts, buyer's orders) — reused on both the car form and the sale
+   form, and searchable fleet-wide from the Documents admin tab. Private
+   storage: never shown on the public website. ---------- */
+function DocumentsPanel({ carId, saleId, vin, vehicle, defaultCategory = "other", notify, refreshToken }) {
+  const [docs, setDocs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [category, setCategory] = useState(defaultCategory);
+  const [label, setLabel] = useState("");
+  const fileRef = useRef(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // When a car is known (true for a sale tied to one), scope by car so
+      // this shows that vehicle's full document history — intake, repair,
+      // and this sale together — not just the one sale's own uploads.
+      const rows = await fetchDocuments(carId ? { carId } : { saleId });
+      setDocs(rows);
+    } catch (e) {
+      notify("Couldn't load documents.");
+    }
+    setLoading(false);
+  }, [carId, saleId, notify]);
+
+  useEffect(() => {
+    load();
+  }, [load, refreshToken]);
+
+  const addFile = async (file) => {
+    setBusy(true);
+    try {
+      const doc = await uploadDocument(file, { carId, saleId, category, label, vin, vehicle });
+      setDocs((d) => [doc, ...d]);
+      setLabel("");
+      notify("Document saved.");
+    } catch (e) {
+      notify("Couldn't save that document. Try again.");
+    }
+    setBusy(false);
+  };
+
+  const remove = async (doc) => {
+    try {
+      await deleteDocument(doc);
+      setDocs((d) => d.filter((x) => x.id !== doc.id));
+    } catch (e) {
+      notify("Couldn't delete that document.");
+    }
+  };
+
+  const view = async (doc) => {
+    try {
+      const url = await signedDocUrl(doc.path);
+      window.open(url, "_blank", "noopener");
+    } catch (e) {
+      notify("Couldn't open that document.");
+    }
+  };
+
+  return (
+    <div className="docs-panel">
+      <p className="micro gold">Documents</p>
+      <div className="docs-add-row">
+        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          {DOC_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Label (optional) — e.g. “Brake job, Joe's Garage”"
+        />
+        <button
+          type="button"
+          className="mini"
+          disabled={busy}
+          onClick={() => fileRef.current && fileRef.current.click()}
+        >
+          {busy ? "Saving…" : "+ Add document"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf,image/*"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files && e.target.files[0];
+            e.target.value = "";
+            if (f) addFile(f);
+          }}
+        />
+      </div>
+
+      {loading ? (
+        <p className="scan-hint">Loading…</p>
+      ) : docs.length === 0 ? (
+        <p className="scan-hint">No documents saved yet.</p>
+      ) : (
+        <ul className="docs-list">
+          {docs.map((d) => (
+            <li key={d.id}>
+              <span className={`doc-tag doc-${d.category}`}>{d.category}</span>
+              <span className="doc-name">{d.label || d.file_name}</span>
+              <span className="doc-date">{new Date(d.created_at).toLocaleDateString()}</span>
+              <button type="button" className="linkish" onClick={() => view(d)}>
+                View
+              </button>
+              <button type="button" className="linkish danger" onClick={() => remove(d)}>
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function CarForm({ car, onCancel, onSaved, notify }) {
   const [v, setV] = useState(car ? { ...BLANK, ...car } : BLANK);
   const [photos, setPhotos] = useState(car ? car.photos : []);
@@ -1251,6 +1380,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [auctionImporting, setAuctionImporting] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [docPreview, setDocPreview] = useState("");
+  const [docsRefreshToken, setDocsRefreshToken] = useState(0);
   const docFileRef = useRef(null);
 
   const runDecode = async (vin) => {
@@ -1301,6 +1431,25 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         const snippet = text.replace(/\s+/g, " ").trim().slice(0, 300);
         notify("Couldn't find a VIN in that document. You can still fill the fields by hand.");
         setDocPreview(snippet || "(nothing readable came out of that file)");
+      }
+      // Archive the original file, not just the data pulled from it — a
+      // dealer-board inquiry wants the actual document, not just the VIN it
+      // decoded to. Only possible once this car has an id to attach it to;
+      // for a brand-new car, the Documents panel below explains the "save
+      // first" step instead of silently dropping the file.
+      if (car && car.id) {
+        try {
+          await uploadDocument(file, {
+            carId: car.id,
+            category: "intake",
+            label: "Auction purchase document",
+            vin: vin || v.vin || "",
+            vehicle: `${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim(),
+          });
+          setDocsRefreshToken((k) => k + 1);
+        } catch (e) {
+          notify("Filled the form, but couldn't save a copy of the document.");
+        }
       }
     } catch (e) {
       notify("Couldn't read that document. Try a clearer photo, or fill the fields by hand.");
@@ -1687,6 +1836,27 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         <LineItems items={expenses} onChange={setExpenses} addLabel="Add expense" />
       </div>
 
+      <div className="cost-section">
+        <p className="micro gold">
+          Document archive — bill of sale, title, repair receipts — private, never shown on the
+          website
+        </p>
+        {car && car.id ? (
+          <DocumentsPanel
+            carId={car.id}
+            vin={v.vin}
+            vehicle={`${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim()}
+            defaultCategory="intake"
+            notify={notify}
+            refreshToken={docsRefreshToken}
+          />
+        ) : (
+          <p className="scan-hint">
+            Save this car once, then come back and edit it to attach documents.
+          </p>
+        )}
+      </div>
+
       {err && <p className="err">{err}</p>}
 
       <div className="form-acts">
@@ -1843,6 +2013,101 @@ function SalesList({ sales, onNew, onEdit, onDelete }) {
         })}
       </div>
     </>
+  );
+}
+
+/* ---------- Fleet-wide document search — for a dealer-board inquiry that
+   isn't about one car in particular: pull everything by VIN, category, or
+   date range, across every car and sale, including ones no longer listed. */
+function DocumentsAudit({ notify }) {
+  const [q, setQ] = useState("");
+  const [category, setCategory] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [docs, setDocs] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      const rows = await fetchDocuments({
+        q: q.trim() || undefined,
+        category: category || undefined,
+        from: from ? `${from}T00:00:00` : undefined,
+        to: to ? `${to}T23:59:59` : undefined,
+      });
+      setDocs(rows);
+    } catch (e) {
+      notify("Couldn't search documents.");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const view = async (doc) => {
+    try {
+      const url = await signedDocUrl(doc.path);
+      window.open(url, "_blank", "noopener");
+    } catch (e) {
+      notify("Couldn't open that document.");
+    }
+  };
+
+  return (
+    <div className="form">
+      <p className="micro gold">Search every document on file</p>
+      <p className="scan-hint" style={{ marginBottom: 12 }}>
+        For a dealer-board inquiry — finds documents by VIN, vehicle, or label, even for cars no
+        longer in inventory.
+      </p>
+      <div className="docs-audit-filters">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search VIN, vehicle, or label…"
+          onKeyDown={(e) => e.key === "Enter" && run()}
+        />
+        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">All categories</option>
+          {DOC_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <span className="micro">to</span>
+        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        <button type="button" className="mini" onClick={run} disabled={loading}>
+          {loading ? "Searching…" : "Search"}
+        </button>
+      </div>
+
+      {docs === null || loading ? (
+        <p className="scan-hint">Loading…</p>
+      ) : docs.length === 0 ? (
+        <p className="scan-hint">No documents match that search.</p>
+      ) : (
+        <ul className="docs-list">
+          {docs.map((d) => (
+            <li key={d.id}>
+              <span className={`doc-tag doc-${d.category}`}>{d.category}</span>
+              <span className="doc-name">
+                {d.vehicle || "—"} {d.vin && <em>({d.vin})</em>} — {d.label || d.file_name}
+              </span>
+              <span className="doc-date">{new Date(d.created_at).toLocaleDateString()}</span>
+              <button type="button" className="linkish" onClick={() => view(d)}>
+                View
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -2334,6 +2599,22 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
             </p>
           )}
         </aside>
+      </div>
+
+      <div className="cost-section">
+        <p className="micro gold">Document archive — buyer's order, odometer disclosure, etc.</p>
+        {s.id ? (
+          <DocumentsPanel
+            saleId={s.id}
+            carId={s.car_id || null}
+            vin={s.vehicle && s.vehicle.vin}
+            vehicle={s.vehicle && `${s.vehicle.year || ""} ${s.vehicle.make || ""} ${s.vehicle.model || ""}`.trim()}
+            defaultCategory="sale"
+            notify={notify}
+          />
+        ) : (
+          <p className="scan-hint">Save this sale once, then reopen it to attach documents.</p>
+        )}
       </div>
 
       {err && <p className="err">{err}</p>}

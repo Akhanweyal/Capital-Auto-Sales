@@ -85,10 +85,35 @@ create table if not exists public.sales (
   created_at timestamptz not null default now()
 );
 
+-- ---------- compliance documents: bill of sale, title, repair receipts,
+-- buyer's orders, condition reports — whatever a dealer-board inquiry might
+-- ask for. car_id/sale_id are "on delete set null" (not cascade) and vin/
+-- vehicle are captured at upload time, so a record stays identifiable and
+-- retrievable even if the car listing itself is later deleted.
+create table if not exists public.documents (
+  id          uuid primary key default gen_random_uuid(),
+  car_id      uuid references public.cars (id) on delete set null,
+  sale_id     uuid references public.sales (id) on delete set null,
+  category    text        not null default 'other', -- 'intake' | 'repair' | 'sale' | 'other'
+  label       text        default '',
+  vin         text        default '',
+  vehicle     text        default '',
+  file_name   text        default '',
+  path        text        not null,
+  uploaded_by text        default '',
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists documents_car_id_idx   on public.documents (car_id);
+create index if not exists documents_sale_id_idx  on public.documents (sale_id);
+create index if not exists documents_category_idx on public.documents (category);
+create index if not exists documents_vin_idx      on public.documents (vin);
+
 alter table public.cars       enable row level security;
 alter table public.leads      enable row level security;
 alter table public.car_costs  enable row level security;
 alter table public.sales      enable row level security;
+alter table public.documents  enable row level security;
 
 -- ---------- who can do what ----------
 -- Anyone (a visitor) can read cars you have published.
@@ -132,6 +157,14 @@ create policy "dealer manages sales"
   to authenticated
   using (true) with check (true);
 
+-- Compliance documents are never public — same "no anon policy at all" rule
+-- as car_costs/sales above.
+drop policy if exists "dealer manages documents" on public.documents;
+create policy "dealer manages documents"
+  on public.documents for all
+  to authenticated
+  using (true) with check (true);
+
 -- ---------- photo storage ----------
 insert into storage.buckets (id, name, public)
 values ('car-photos', 'car-photos', true)
@@ -148,3 +181,16 @@ create policy "dealer uploads car photos"
   on storage.objects for all
   to authenticated
   using (bucket_id = 'car-photos') with check (bucket_id = 'car-photos');
+
+-- ---------- compliance document storage (private — unlike car-photos, this
+-- bucket is never public; documents can hold buyer names, signatures, and
+-- other info that has no business being world-readable) ----------
+insert into storage.buckets (id, name, public)
+values ('car-documents', 'car-documents', false)
+on conflict (id) do nothing;
+
+drop policy if exists "dealer manages document storage" on storage.objects;
+create policy "dealer manages document storage"
+  on storage.objects for all
+  to authenticated
+  using (bucket_id = 'car-documents') with check (bucket_id = 'car-documents');
