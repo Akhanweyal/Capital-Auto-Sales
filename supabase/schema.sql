@@ -135,23 +135,55 @@ alter table public.sales add column if not exists buyers_guide_signed       bool
 -- or liability question while out on dealer tags. Unlike documents, a
 -- correction (fixing a mistyped license number, logging the return time) is
 -- a normal thing to need here, so update is allowed; delete still isn't.
+--
+-- Modeled on DMV form DSD 27 ("Permission for Use of Dealer's License
+-- Plates"), which is only required when the CUSTOMER (or another
+-- non-employee) is the one operating the vehicle on dealer plates, not when
+-- a salesperson is driving with the customer along for the ride — that's
+-- covered by the dealer's own general inventory-use authorization, no
+-- per-trip form needed. DSD 27 itself asks for name/address/contact info
+-- and which of its three operator categories applies, not a license number
+-- or insurance proof, so this mirrors that rather than inventing fields the
+-- real form doesn't have. DMV requires the dealer's copy be kept 5 years.
 create table if not exists public.test_drives (
   id              uuid primary key default gen_random_uuid(),
   car_id          uuid references public.cars (id) on delete set null,
   vin             text        default '',
   vehicle         text        default '',
+  -- 'prospective_purchaser' | 'dealer_authorized_individual' (both need a
+  -- DSD 27) | 'salesperson_driving' (customer's a passenger, no DSD 27)
+  operator_type   text        not null default 'prospective_purchaser',
   driver_name     text        not null default '',
+  driver_address  text        default '',
+  driver_city     text        default '',
+  driver_state    text        default 'VA',
+  driver_zip      text        default '',
+  driver_phone    text        default '',
+  driver_email    text        default '',
+  -- Kept as optional extras for the dealer's own records, even though
+  -- they're not fields on the official DSD 27.
   driver_license  text        default '',
   driver_license_state text   default 'VA',
-  driver_phone    text        default '',
   buyer_name      text        default '',
   dealer_tag      text        default '',
   salesperson     text        default '',
   notes           text        default '',
   out_at          timestamptz not null default now(),
+  -- Plate authorization expiry per DSD 27: up to 24 hours for a dealer
+  -- authorized individual, up to 5 days for a prospective purchaser. Null
+  -- for salesperson_driving, since no DSD 27 applies.
+  expires_at      timestamptz,
   in_at           timestamptz,
   created_at      timestamptz not null default now()
 );
+
+alter table public.test_drives add column if not exists operator_type text not null default 'prospective_purchaser';
+alter table public.test_drives add column if not exists driver_address text default '';
+alter table public.test_drives add column if not exists driver_city    text default '';
+alter table public.test_drives add column if not exists driver_state   text default 'VA';
+alter table public.test_drives add column if not exists driver_zip     text default '';
+alter table public.test_drives add column if not exists driver_email   text default '';
+alter table public.test_drives add column if not exists expires_at     timestamptz;
 
 create index if not exists test_drives_car_id_idx on public.test_drives (car_id);
 

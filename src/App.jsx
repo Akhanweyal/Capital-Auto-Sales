@@ -26,7 +26,7 @@ import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
 import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
-import { logTestDrive, fetchTestDrives, markReturned } from "./lib/testDrives.js";
+import { logTestDrive, fetchTestDrives, markReturned, OPERATOR_TYPES } from "./lib/testDrives.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1442,20 +1442,29 @@ function DocumentsPanel({
 
 /* ---------- Dealer-tag test drive log — one record per trip, per vehicle,
    for liability if something happens while a car's out on dealer plates. */
+const BLANK_TRIP = {
+  operatorType: "prospective_purchaser",
+  driverName: "",
+  driverAddress: "",
+  driverCity: "",
+  driverState: "VA",
+  driverZip: "",
+  driverPhone: "",
+  driverEmail: "",
+  driverLicense: "",
+  driverLicenseState: "VA",
+  buyerName: "",
+  dealerTag: "",
+  salesperson: "",
+  notes: "",
+};
+
 function TestDrivePanel({ carId, vin, vehicle, notify }) {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({
-    driverName: "",
-    driverLicense: "",
-    driverLicenseState: "VA",
-    driverPhone: "",
-    buyerName: "",
-    dealerTag: "",
-    salesperson: "",
-    notes: "",
-  });
+  const [form, setForm] = useState(BLANK_TRIP);
+  const type = OPERATOR_TYPES.find((t) => t.value === form.operatorType) || OPERATOR_TYPES[0];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1475,23 +1484,18 @@ function TestDrivePanel({ carId, vin, vehicle, notify }) {
 
   const submit = async () => {
     if (!form.driverName.trim()) {
-      notify("Add the driver's name first.");
+      notify(type.needsForm ? "Add the driver's name first." : "Add the salesperson's name first.");
+      return;
+    }
+    if (type.needsForm && !form.dealerTag.trim()) {
+      notify("Add the dealer plate number — DSD 27 requires it.");
       return;
     }
     setBusy(true);
     try {
       const trip = await logTestDrive({ carId, vin, vehicle, ...form });
       setTrips((t) => [trip, ...t]);
-      setForm({
-        driverName: "",
-        driverLicense: "",
-        driverLicenseState: "VA",
-        driverPhone: "",
-        buyerName: "",
-        dealerTag: "",
-        salesperson: "",
-        notes: "",
-      });
+      setForm(BLANK_TRIP);
       notify("Test drive logged.");
     } catch (e) {
       notify("Couldn't log that test drive. Try again.");
@@ -1511,41 +1515,90 @@ function TestDrivePanel({ carId, vin, vehicle, notify }) {
   return (
     <div className="docs-panel">
       <p className="micro gold">Dealer tag test drive log</p>
-      <p className="scan-hint">A record of who drove this vehicle on dealer plates, and when.</p>
+      <p className="scan-hint">
+        A DSD 27 ("Permission for Use of Dealer's License Plates") is only required when the
+        customer — not a salesperson — is the one driving. Pick which applies below.
+      </p>
       <div className="fields">
+        <label className="full">
+          <span>Who's driving?</span>
+          <select value={form.operatorType} onChange={set("operatorType")}>
+            {OPERATOR_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <label>
-          <span>Driver name</span>
+          <span>{type.needsForm ? "Driver name" : "Salesperson name"}</span>
           <input value={form.driverName} onChange={set("driverName")} />
         </label>
-        <label>
-          <span>Driver's license #</span>
-          <input value={form.driverLicense} onChange={set("driverLicense")} />
-        </label>
-        <label>
-          <span>License state</span>
-          <input value={form.driverLicenseState} onChange={set("driverLicenseState")} />
-        </label>
-        <label>
-          <span>Driver phone</span>
-          <input value={form.driverPhone} onChange={set("driverPhone")} />
-        </label>
-        <label>
-          <span>Buyer (if different from driver)</span>
-          <input value={form.buyerName} onChange={set("buyerName")} />
-        </label>
-        <label>
-          <span>Dealer tag #</span>
-          <input value={form.dealerTag} onChange={set("dealerTag")} />
-        </label>
-        <label>
-          <span>Salesperson</span>
-          <input value={form.salesperson} onChange={set("salesperson")} />
-        </label>
+
+        {type.needsForm ? (
+          <>
+            <label>
+              <span>Street address</span>
+              <input value={form.driverAddress} onChange={set("driverAddress")} />
+            </label>
+            <label>
+              <span>City</span>
+              <input value={form.driverCity} onChange={set("driverCity")} />
+            </label>
+            <label>
+              <span>State</span>
+              <input value={form.driverState} onChange={set("driverState")} />
+            </label>
+            <label>
+              <span>ZIP</span>
+              <input value={form.driverZip} onChange={set("driverZip")} />
+            </label>
+            <label>
+              <span>Phone</span>
+              <input value={form.driverPhone} onChange={set("driverPhone")} />
+            </label>
+            <label>
+              <span>Email</span>
+              <input value={form.driverEmail} onChange={set("driverEmail")} />
+            </label>
+            <label>
+              <span>Dealer plate #</span>
+              <input value={form.dealerTag} onChange={set("dealerTag")} />
+            </label>
+            <label>
+              <span>Driver's license # (optional, not on DSD 27)</span>
+              <input value={form.driverLicense} onChange={set("driverLicense")} />
+            </label>
+            <label>
+              <span>License state</span>
+              <input value={form.driverLicenseState} onChange={set("driverLicenseState")} />
+            </label>
+            {form.operatorType === "prospective_purchaser" && (
+              <label>
+                <span>Salesperson who issued this</span>
+                <input value={form.salesperson} onChange={set("salesperson")} />
+              </label>
+            )}
+          </>
+        ) : (
+          <label>
+            <span>Customer riding along (optional)</span>
+            <input value={form.buyerName} onChange={set("buyerName")} />
+          </label>
+        )}
+
         <label className="full">
           <span>Notes</span>
-          <input value={form.notes} onChange={set("notes")} placeholder="Accompanied test drive, local roads only, etc." />
+          <input value={form.notes} onChange={set("notes")} placeholder="Local roads only, highway demo, etc." />
         </label>
       </div>
+      {type.needsForm && (
+        <p className="scan-hint">
+          Valid up to {type.maxHours === 24 ? "24 hours" : `${type.maxHours / 24} days`} per DSD 27 —
+          expiry is set automatically when you log this.
+        </p>
+      )}
       <button type="button" className="mini" disabled={busy} onClick={submit} style={{ marginTop: 10 }}>
         {busy ? "Logging…" : "Log test drive"}
       </button>
@@ -1563,12 +1616,14 @@ function TestDrivePanel({ carId, vin, vehicle, notify }) {
           {trips.map((t) => (
             <li key={t.id}>
               <span className="doc-name">
-                {t.driver_name} {t.dealer_tag && `· tag ${t.dealer_tag}`}
-                {t.buyer_name && ` · buyer ${t.buyer_name}`}
+                {t.driver_name} {t.dealer_tag && `· plate ${t.dealer_tag}`}
+                {t.buyer_name && ` · with ${t.buyer_name}`}
+                {t.operator_type === "salesperson_driving" && " · salesperson driving, no DSD 27"}
               </span>
               <span className="doc-date">
                 out {new Date(t.out_at).toLocaleString()}
                 {t.in_at ? ` · back ${new Date(t.in_at).toLocaleString()}` : ""}
+                {!t.in_at && t.expires_at && ` · expires ${new Date(t.expires_at).toLocaleString()}`}
               </span>
               {!t.in_at && (
                 <button type="button" className="linkish" onClick={() => returned(t.id)}>
