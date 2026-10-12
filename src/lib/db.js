@@ -35,6 +35,8 @@ const fromRow = (r) => ({
   warrantyPctLabor: Number(r.warranty_pct_labor) || 0,
   warrantyPctParts: Number(r.warranty_pct_parts) || 0,
   createdAt: new Date(r.created_at).getTime(),
+  updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : null,
+  updatedBy: r.updated_by || "",
 });
 
 const toRow = (c) => ({

@@ -399,3 +399,56 @@ create policy "dealer adds document storage"
   on storage.objects for insert
   to authenticated
   with check (bucket_id = 'car-documents');
+
+-- ---------- "last updated by / at" + live sync across users ----------
+-- Set server-side from the authenticated session, not whatever the client
+-- sends — this trigger overwrites updated_by/updated_at unconditionally on
+-- every UPDATE, so it can't be spoofed by a buggy or malicious client.
+alter table public.cars  add column if not exists updated_at timestamptz not null default now();
+alter table public.cars  add column if not exists updated_by text        default '';
+alter table public.sales add column if not exists updated_at timestamptz not null default now();
+alter table public.sales add column if not exists updated_by text        default '';
+
+create or replace function public.stamp_updated_by()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.updated_at := now();
+  new.updated_by := coalesce((select email from public.profiles where id = auth.uid()), '');
+  return new;
+end;
+$$;
+
+drop trigger if exists cars_stamp_updated on public.cars;
+create trigger cars_stamp_updated
+  before update on public.cars
+  for each row execute function public.stamp_updated_by();
+
+drop trigger if exists sales_stamp_updated on public.sales;
+create trigger sales_stamp_updated
+  before update on public.sales
+  for each row execute function public.stamp_updated_by();
+
+-- Realtime: push live INSERT/UPDATE/DELETE on cars and sales to every
+-- connected admin/partner session, so two people working inventory at the
+-- same time see each other's changes without refreshing. Wrapped in a
+-- not-already-a-member check since "alter publication ... add table" has
+-- no built-in "if not exists" and errors on a second run otherwise.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'cars'
+  ) then
+    alter publication supabase_realtime add table public.cars;
+  end if;
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'sales'
+  ) then
+    alter publication supabase_realtime add table public.sales;
+  end if;
+end $$;

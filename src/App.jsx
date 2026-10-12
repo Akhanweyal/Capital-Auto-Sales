@@ -51,6 +51,17 @@ const money = (n) =>
 const moneyCents = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n) || 0);
 const miles = (n) => new Intl.NumberFormat("en-US").format(Number(n) || 0);
+function timeAgo(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return `${d}d ago`;
+}
 const title = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}`.trim();
 
 function setPath(obj, path, value) {
@@ -812,6 +823,37 @@ function Admin({ go, say }) {
     if (session) reload();
   }, [session, reload]);
 
+  // Kept in a ref (not an effect dependency) so a reload() — itself
+  // triggered by this same subscription — doesn't tear down and resubscribe
+  // the realtime channel every time new profile data comes back.
+  const profileRef = useRef(profile);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  useEffect(() => {
+    if (!session) return;
+    let debounceTimer = null;
+    const onChange = (table) => (payload) => {
+      const actor = payload.new && payload.new.updated_by;
+      const mine = profileRef.current && actor && actor === profileRef.current.email;
+      if (actor && !mine) {
+        notify(`${actor} updated ${table === "cars" ? "a vehicle" : "a sale"} — refreshing…`);
+      }
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(reload, 400);
+    };
+    const channel = supabase
+      .channel("admin-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cars" }, onChange("cars"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, onChange("sales"))
+      .subscribe();
+    return () => {
+      clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [session, notify, reload]);
+
   if (session === undefined) return <div className="gate" />;
   if (!session) return <SignIn go={go} />;
 
@@ -1074,6 +1116,7 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
               <p className="row-meta">
                 {money(c.price)} · {miles(c.mileage)} mi · {c.condition}
                 {c.vin ? ` · VIN ${c.vin}` : ""}
+                {c.updatedBy && ` · updated by ${c.updatedBy} ${timeAgo(c.updatedAt)}`}
               </p>
               <div className="chips">
                 {c.sold ? (
@@ -2000,6 +2043,11 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           Cancel
         </button>
       </div>
+      {car && car.updatedBy && (
+        <p className="scan-hint" style={{ marginTop: -12, marginBottom: 16 }}>
+          Last updated by {car.updatedBy} {timeAgo(car.updatedAt)}.
+        </p>
+      )}
 
       <div
         className={"drop" + (drag ? " over" : "")}
@@ -2479,6 +2527,7 @@ function SalesList({ sales, onNew, onEdit, onDelete }) {
                 <p className="row-meta">
                   {(s.buyer && s.buyer.name) || "No buyer name yet"} · {s.sale_date} · Total{" "}
                   {moneyCents(t.totalDue)} · Profit {moneyCents(t.netProfit)}
+                  {s.updated_by && ` · updated by ${s.updated_by} ${timeAgo(s.updated_at)}`}
                 </p>
                 <div className="chips">
                   {s.finalized ? (
@@ -2847,6 +2896,11 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
           Cancel
         </button>
       </div>
+      {s.updated_by && (
+        <p className="scan-hint" style={{ marginTop: -12, marginBottom: 16 }}>
+          Last updated by {s.updated_by} {timeAgo(s.updated_at)}.
+        </p>
+      )}
 
       {!s.car_id && (
         <div className="sale-section">
