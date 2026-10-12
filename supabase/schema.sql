@@ -4,6 +4,74 @@
 -- Safe to run once on a brand new project.
 -- ============================================================
 
+-- ---------- team roles: admin (you) vs partner (everyone else) ----------
+-- Partners get the exact same data access as admin everywhere else in this
+-- file (cars, sales, documents, test drives, costs all stay "any
+-- authenticated user" on purpose) — the only thing gated by role is this
+-- table itself, i.e. who can see/change who's admin vs partner.
+create table if not exists public.profiles (
+  id         uuid primary key references auth.users (id) on delete cascade,
+  email      text        default '',
+  role       text        not null default 'partner', -- 'admin' | 'partner'
+  created_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+-- security definer so this can read public.profiles without re-triggering
+-- RLS on itself (a policy that queries profiles from inside a profiles
+-- policy would recurse) — the standard Supabase pattern for a role check.
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles where id = auth.uid() and role = 'admin'
+  );
+$$;
+
+-- New sign-ups default to 'partner'. You promote yourself to 'admin' with
+-- the one-time backfill below (run once, right after this creates the
+-- table — see the UPDATE statement a few lines down).
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, email, role)
+  values (new.id, new.email, 'partner')
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- One-time backfill for accounts that already existed before this table
+-- did — today that's just you, so this makes you 'admin'. Any partner you
+-- add after this point gets 'partner' automatically via the trigger above.
+insert into public.profiles (id, email, role)
+select id, email, 'admin' from auth.users
+on conflict (id) do nothing;
+
+drop policy if exists "anyone reads profiles" on public.profiles;
+drop policy if exists "admin updates profiles" on public.profiles;
+create policy "anyone reads profiles"
+  on public.profiles for select
+  to authenticated
+  using (true);
+create policy "admin updates profiles"
+  on public.profiles for update
+  to authenticated
+  using (is_admin()) with check (is_admin());
+
 -- ---------- inventory ----------
 create table if not exists public.cars (
   id          uuid primary key default gen_random_uuid(),

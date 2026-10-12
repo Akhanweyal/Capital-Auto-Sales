@@ -21,6 +21,9 @@ import {
   deleteSale,
   signIn,
   signOut,
+  fetchMyProfile,
+  fetchTeam,
+  setTeamRole,
 } from "./lib/db.js";
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
@@ -607,6 +610,7 @@ function CarPage({ car, ready, go }) {
               Text about this car
             </a>
           </div>
+          <ShareButtons car={car} />
           <LeadForm car={car} />
           <p className="panel-addr">
             {DEALER.address} · {DEALER.city}
@@ -629,6 +633,67 @@ function CarPage({ car, ready, go }) {
         </a>
       </div>
     </main>
+  );
+}
+
+/* ---------- Share this listing — opens each platform's own share dialog;
+   nothing posts on its own, no credentials involved. The /car/:id route
+   already serves real OG/Twitter meta tags server-side (see api/car.js),
+   so the shared link renders a proper preview card with photo/price/title. */
+function ShareButtons({ car }) {
+  const [copied, setCopied] = useState(false);
+  const url = `${window.location.origin}/car/${car.id}`;
+  const text = `${title(car)} — ${money(car.price)} at ${DEALER.name}`;
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      // Clipboard API can be unavailable (permissions, insecure context) —
+      // low-stakes convenience feature, fine to just no-op.
+    }
+  };
+
+  const nativeShare = async () => {
+    try {
+      await navigator.share({ title: text, url });
+    } catch (e) {
+      // User cancelled, or the API isn't available — no-op either way.
+    }
+  };
+
+  return (
+    <div className="share-row">
+      <span className="micro">Share this car</span>
+      <div className="share-btns">
+        <a
+          className="mini"
+          href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Facebook
+        </a>
+        <a
+          className="mini"
+          href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          X
+        </a>
+        {navigator.share && (
+          <button type="button" className="mini" onClick={nativeShare}>
+            More…
+          </button>
+        )}
+        <button type="button" className="mini" onClick={copyLink}>
+          {copied ? "Copied!" : "Copy link"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -705,6 +770,7 @@ function LeadForm({ car }) {
    ============================================================ */
 function Admin({ go, say }) {
   const [session, setSession] = useState(undefined); // undefined = still checking
+  const [profile, setProfile] = useState(null);
   const [cars, setCars] = useState([]);
   const [leads, setLeads] = useState([]);
   const [sales, setSales] = useState([]);
@@ -734,6 +800,11 @@ function Admin({ go, say }) {
       setSales(s);
     } catch (e) {
       notify("Couldn't load your inventory. Check your connection.");
+    }
+    try {
+      setProfile(await fetchMyProfile());
+    } catch (e) {
+      // Not fatal — the Team tab just won't show if this fails.
     }
   }, [notify]);
 
@@ -808,6 +879,11 @@ function Admin({ go, say }) {
           <button className={tab === "documents" ? "on" : ""} onClick={() => setTab("documents")}>
             Documents
           </button>
+          {profile && profile.role === "admin" && (
+            <button className={tab === "team" ? "on" : ""} onClick={() => setTab("team")}>
+              Team
+            </button>
+          )}
         </div>
       </header>
 
@@ -893,6 +969,10 @@ function Admin({ go, say }) {
         )}
 
         {!editing && !editingSale && tab === "documents" && <DocumentsAudit notify={notify} />}
+
+        {!editing && !editingSale && tab === "team" && profile && profile.role === "admin" && (
+          <TeamPanel notify={notify} myId={session.user.id} />
+        )}
       </main>
 
       {toast && <div className="toast">{toast}</div>}
@@ -2510,6 +2590,76 @@ function DocumentsAudit({ notify }) {
               <span className="doc-date">{new Date(d.created_at).toLocaleDateString()}</span>
               <button type="button" className="linkish" onClick={() => view(d)}>
                 View
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Team roster — admin-only. Adding/removing people is done in
+   the Supabase dashboard (no separate invite flow, so no new credential
+   this app needs to hold) — this just lets the admin see who has access
+   and flip someone between partner and admin. */
+function TeamPanel({ notify, myId }) {
+  const [team, setTeam] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setTeam(await fetchTeam());
+    } catch (e) {
+      notify("Couldn't load the team list.");
+    }
+  }, [notify]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const toggleRole = async (person) => {
+    const nextRole = person.role === "admin" ? "partner" : "admin";
+    if (
+      person.id === myId &&
+      nextRole !== "admin" &&
+      !window.confirm("This removes your own admin access. Continue?")
+    ) {
+      return;
+    }
+    setBusyId(person.id);
+    try {
+      await setTeamRole(person.id, nextRole);
+      setTeam((t) => t.map((p) => (p.id === person.id ? { ...p, role: nextRole } : p)));
+      notify(`${person.email || "That user"} is now ${nextRole}.`);
+    } catch (e) {
+      notify("Couldn't change that role.");
+    }
+    setBusyId(null);
+  };
+
+  return (
+    <div className="form">
+      <p className="micro gold">Team</p>
+      <p className="scan-hint" style={{ marginBottom: 12 }}>
+        Partners can add cars, run sales, and see everything you can — the only thing kept
+        admin-only is this screen. To add someone, create their login in the Supabase dashboard
+        (Authentication → Users → Add user); they'll show up here automatically as a partner.
+      </p>
+      {team === null ? (
+        <p className="scan-hint">Loading…</p>
+      ) : (
+        <ul className="docs-list">
+          {team.map((p) => (
+            <li key={p.id}>
+              <span className={"doc-tag " + (p.role === "admin" ? "doc-sale" : "doc-other")}>{p.role}</span>
+              <span className="doc-name">
+                {p.email || p.id} {p.id === myId && <em>(you)</em>}
+              </span>
+              <span className="doc-date">joined {new Date(p.created_at).toLocaleDateString()}</span>
+              <button type="button" className="linkish" disabled={busyId === p.id} onClick={() => toggleRole(p)}>
+                {busyId === p.id ? "…" : p.role === "admin" ? "Make partner" : "Make admin"}
               </button>
             </li>
           ))}

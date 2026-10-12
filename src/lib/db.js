@@ -238,3 +238,24 @@ export async function currentSession() {
   const { data } = await supabase.auth.getSession();
   return data.session;
 }
+
+/* ---------- team: admin vs partner ---------- */
+export async function fetchMyProfile() {
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData && userData.user && userData.user.id;
+  if (!uid) return null;
+  const { data, error } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function fetchTeam() {
+  const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function setTeamRole(id, role) {
+  const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
+  if (error) throw error;
+}
