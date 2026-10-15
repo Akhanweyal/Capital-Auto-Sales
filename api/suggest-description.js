@@ -18,6 +18,17 @@ const SYSTEM_PROMPT =
   "shoppers and search engines. Don't invent features, history, or condition details that weren't " +
   "given to you. Don't use a salesy opening like 'Introducing' or 'Check out'.";
 
+// Free-tier keys hit real rate/quota limits in normal use (unlike a paid
+// Claude key), so it's worth telling the admin *why* it failed rather than
+// a flat "try again" — "you're rate-limited, wait a bit" is a different fix
+// than "the key is wrong".
+function isQuotaError(e) {
+  const status = e && (e.status || e.statusCode);
+  if (status === 429) return true;
+  const msg = (e && e.message) || "";
+  return /quota|rate.?limit|resource_exhausted/i.test(msg);
+}
+
 async function tryClaude(facts) {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const client = new Anthropic();
@@ -79,23 +90,34 @@ export default async function handler(req, res) {
 
   let description = null;
   let usedFallback = false;
+  let claudeFailed = false;
+  let geminiError = null;
   try {
     description = await tryClaude(facts);
   } catch (e) {
-    // fall through to Gemini
+    claudeFailed = true; // fall through to Gemini
   }
   if (!description) {
     try {
       description = await tryGemini(facts);
       usedFallback = true;
     } catch (e) {
-      // both failed
+      geminiError = e;
     }
   }
 
   if (description) {
     res.status(200).json({ description, usedFallback });
-  } else {
-    res.status(200).json({ error: "Couldn't generate a description. Try again." });
+    return;
   }
+
+  if (geminiError && isQuotaError(geminiError)) {
+    res.status(200).json({
+      error: claudeFailed
+        ? "Claude failed and Gemini's free tier is rate-limited right now — wait a minute and try again."
+        : "Gemini's free tier is rate-limited right now — wait a minute and try again.",
+    });
+    return;
+  }
+  res.status(200).json({ error: "Couldn't generate a description. Try again." });
 }
