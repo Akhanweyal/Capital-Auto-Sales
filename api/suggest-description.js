@@ -29,6 +29,20 @@ function isQuotaError(e) {
   return /quota|rate.?limit|resource_exhausted/i.test(msg);
 }
 
+// Pulls the most useful bit out of an SDK error for logging/display — the
+// status code plus whatever message the API actually sent back, not just
+// "Error" or a generic wrapper message.
+function errDetail(e) {
+  if (!e) return "unknown error";
+  const status = e.status || e.statusCode || (e.response && e.response.status);
+  const apiMsg =
+    (e.error && (e.error.message || JSON.stringify(e.error))) ||
+    (e.response && e.response.data && JSON.stringify(e.response.data)) ||
+    e.message ||
+    String(e);
+  return status ? `[${status}] ${apiMsg}` : apiMsg;
+}
+
 async function tryClaude(facts) {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const client = new Anthropic();
@@ -92,12 +106,13 @@ export default async function handler(req, res) {
 
   let description = null;
   let usedFallback = false;
-  let claudeFailed = false;
+  let claudeError = null;
   let geminiError = null;
   try {
     description = await tryClaude(facts);
   } catch (e) {
-    claudeFailed = true; // fall through to Gemini
+    claudeError = e;
+    console.error("suggest-description: Claude failed —", errDetail(e));
   }
   if (!description) {
     try {
@@ -105,6 +120,7 @@ export default async function handler(req, res) {
       usedFallback = true;
     } catch (e) {
       geminiError = e;
+      console.error("suggest-description: Gemini failed —", errDetail(e));
     }
   }
 
@@ -115,11 +131,16 @@ export default async function handler(req, res) {
 
   if (geminiError && isQuotaError(geminiError)) {
     res.status(200).json({
-      error: claudeFailed
+      error: claudeError
         ? "Claude failed and Gemini's free tier is rate-limited right now — wait a minute and try again."
         : "Gemini's free tier is rate-limited right now — wait a minute and try again.",
     });
     return;
   }
-  res.status(200).json({ error: "Couldn't generate a description. Try again." });
+
+  // Surface the real error directly rather than a flat "try again" — this
+  // is an admin-only internal tool, so there's no reason to hide it behind
+  // a generic message the way a customer-facing error would.
+  const detail = geminiError ? errDetail(geminiError) : claudeError ? errDetail(claudeError) : "no provider configured";
+  res.status(200).json({ error: `Couldn't generate a description — ${detail}` });
 }
