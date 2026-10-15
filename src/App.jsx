@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   configured,
   supabase,
@@ -36,6 +37,10 @@ import { logTestDrive, fetchTestDrives, markReturned, OPERATOR_TYPES } from "./l
    ============================================================ */
 export const DEALER = {
   name: "Capital Auto Sales",
+  // Full registered legal entity name — used on legal paperwork (buyer's
+  // order, buyer's guide); the website/texts use the shorter trade name
+  // above.
+  legalName: "Capital Auto Sales LLC",
   phone: "804-372-4422",
   phoneHref: "+18043724422",
   address: "8607 Oakview Ave",
@@ -63,6 +68,29 @@ function timeAgo(ts) {
   return `${d}d ago`;
 }
 const title = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}`.trim();
+
+// Renders children into a dedicated node appended directly to <body>,
+// completely outside #root. Printable documents (buyer's order, buyer's
+// guide, lot tag) all use this: the old approach hid the rest of the page
+// with visibility:hidden, which keeps hidden elements' layout space intact
+// and was paginating print output across several mostly-blank pages. With
+// the content genuinely outside #root, @media print can just hide #root
+// wholesale and show this instead — no leftover phantom space.
+function PrintPortal({ children }) {
+  const elRef = useRef(null);
+  if (!elRef.current) {
+    elRef.current = document.createElement("div");
+    elRef.current.className = "print-portal";
+  }
+  useEffect(() => {
+    const el = elRef.current;
+    document.body.appendChild(el);
+    return () => {
+      document.body.removeChild(el);
+    };
+  }, []);
+  return createPortal(children, elRef.current);
+}
 
 function setPath(obj, path, value) {
   const [head, ...rest] = path.split(".");
@@ -2394,18 +2422,24 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       </div>
 
       {printDoc === "buyersGuide" && (
-        <BuyerGuideDocument
-          vehicle={v}
-          warranty={{
-            type: v.warrantyType,
-            systems: v.warrantySystems,
-            duration: v.warrantyDuration,
-            pctLabor: v.warrantyPctLabor,
-            pctParts: v.warrantyPctParts,
-          }}
-        />
+        <PrintPortal>
+          <BuyerGuideDocument
+            vehicle={v}
+            warranty={{
+              type: v.warrantyType,
+              systems: v.warrantySystems,
+              duration: v.warrantyDuration,
+              pctLabor: v.warrantyPctLabor,
+              pctParts: v.warrantyPctParts,
+            }}
+          />
+        </PrintPortal>
       )}
-      {printDoc === "notReady" && <NotReadyTag car={v} />}
+      {printDoc === "notReady" && (
+        <PrintPortal>
+          <NotReadyTag car={v} />
+        </PrintPortal>
+      )}
     </div>
   );
 }
@@ -3421,9 +3455,15 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
         </button>
       </div>
 
-      {printDoc === "buyersOrder" && <SaleDocument s={s} totals={totals} />}
+      {printDoc === "buyersOrder" && (
+        <PrintPortal>
+          <SaleDocument s={s} totals={totals} />
+        </PrintPortal>
+      )}
       {printDoc === "buyersGuide" && (
-        <BuyerGuideDocument vehicle={s.vehicle} warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }} />
+        <PrintPortal>
+          <BuyerGuideDocument vehicle={s.vehicle} warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }} />
+        </PrintPortal>
       )}
     </div>
   );
@@ -3470,7 +3510,7 @@ function SaleDocument({ s, totals }) {
     <div className="print-area sale-doc">
       <div className="doc-head">
         <div>
-          <h2>{DEALER.name}</h2>
+          <h2>{DEALER.legalName}</h2>
           <p className="doc-letterhead">
             {DEALER.address}, {DEALER.city} · {DEALER.phone}
           </p>
@@ -3582,7 +3622,7 @@ function SaleDocument({ s, totals }) {
           <section>
             <h4>Seller information</h4>
             <p>
-              <strong>{DEALER.name}</strong>
+              <strong>{DEALER.legalName}</strong>
             </p>
             <p>{DEALER.address}</p>
             <p>{DEALER.city}</p>
@@ -3708,7 +3748,7 @@ function SaleDocument({ s, totals }) {
       </div>
 
       <p className="doc-foot">
-        {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 1 of 2
+        {DEALER.legalName} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 1 of 2
       </p>
 
       {/* Independently written to cover the same substantive ground a
@@ -3774,7 +3814,7 @@ function SaleDocument({ s, totals }) {
       </div>
 
       <p className="doc-foot">
-        {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 2 of 2
+        {DEALER.legalName} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 2 of 2
       </p>
     </div>
   );
@@ -3932,13 +3972,13 @@ function BuyerGuideDocument({ vehicle, warranty }) {
 
       <div className="doc-signatures" style={{ marginTop: 18 }}>
         <div>
-          <p>{DEALER.name}</p>
+          <p>{DEALER.legalName}</p>
           <p>{DEALER.address}, {DEALER.city}</p>
           <p>{DEALER.phone}</p>
         </div>
         <div>
           <span className="micro">FOR COMPLAINTS AFTER SALE, CONTACT:</span>
-          <p>{DEALER.name} — {DEALER.phone}</p>
+          <p>{DEALER.legalName} — {DEALER.phone}</p>
         </div>
       </div>
 
