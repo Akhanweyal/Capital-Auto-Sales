@@ -1978,7 +1978,11 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       const data = await r.json();
       if (data.description) {
         setV((prev) => ({ ...prev, description: data.description }));
-        notify("Description suggested — edit as you like before publishing.");
+        notify(
+          data.usedFallback
+            ? "Description suggested (via free fallback — Claude was unavailable). Edit as you like."
+            : "Description suggested — edit as you like before publishing."
+        );
       } else {
         notify(data.error || "Couldn't generate a description.");
       }
