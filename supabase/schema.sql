@@ -452,3 +452,49 @@ begin
     alter publication supabase_realtime add table public.sales;
   end if;
 end $$;
+
+-- ---------- towed-in vehicle release forms — deliberately standalone ----------
+-- For vehicles towed in for storage (not dealership inventory): no car_id,
+-- no link to cars/sales/documents, never read by saleTotals/profit/inventory
+-- counts anywhere in the app. Company name is a free-typed field rather than
+-- defaulting to the dealership name, since this may be filled out for a
+-- different towing/storage entity. Plain "authenticated, full access"
+-- RLS, same baseline as the rest of the dealer-only tables — this one just
+-- isn't woven into any of the dealership math.
+create table if not exists public.release_forms (
+  id                uuid primary key default gen_random_uuid(),
+  company_name      text        default '',
+  release_date      date        not null default current_date,
+  vehicle_year      text        default '',
+  vehicle_make      text        default '',
+  vehicle_model     text        default '',
+  vehicle_color     text        default '',
+  vehicle_vin       text        default '',
+  vehicle_plate     text        default '',
+  plate_state       text        default 'VA',
+  odometer          text        default '',
+  towed_from        text        default '',
+  tow_date          date,
+  reason            text        default '',
+  releasee_name     text        default '',
+  releasee_address  text        default '',
+  releasee_phone    text        default '',
+  releasee_dl       text        default '',
+  storage_rate      numeric     not null default 0,
+  storage_days      numeric     not null default 0,
+  tow_fee           numeric     not null default 0,
+  other_fee         numeric     not null default 0,
+  amount_paid       numeric     not null default 0,
+  notes             text        default '',
+  released_by       text        default '',
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+
+alter table public.release_forms enable row level security;
+
+drop policy if exists "dealer manages release forms" on public.release_forms;
+create policy "dealer manages release forms"
+  on public.release_forms for all
+  to authenticated
+  using (true) with check (true);
