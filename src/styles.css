@@ -296,9 +296,10 @@ button{font:inherit;cursor:pointer}
 /* printable buyer's order */
 .print-area{display:none}
 .sale-doc{background:#fff;color:#111;font-size:12px;line-height:1.4}
-.doc-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:14px}
+.doc-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:14px}
 .doc-head h2{font-size:20px;margin:0}
-.doc-head div{display:flex;gap:18px;font-size:12px}
+.doc-letterhead{font-size:11px;color:#333;margin:2px 0 0}
+.doc-head>div:last-child{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:12px}
 .doc-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
 .doc-col section{border:1px solid #ccc;padding:10px 12px;margin-bottom:10px}
 .doc-col h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px;border-bottom:1px solid #ccc;padding-bottom:4px}
@@ -317,6 +318,10 @@ button{font:inherit;cursor:pointer}
 .doc-signatures{display:flex;justify-content:space-between;gap:16px;margin-top:22px;flex-wrap:wrap}
 .doc-signatures>div{flex:1;min-width:180px}
 .doc-foot{text-align:center;font-size:10px;color:#555;margin-top:18px;border-top:1px solid #ccc;padding-top:6px}
+.doc-terms{page-break-before:always;padding-top:18px;font-size:10px;line-height:1.5}
+.doc-terms-title{font-weight:700;text-align:center;font-size:12px;letter-spacing:.04em;margin-bottom:10px}
+.doc-terms ol{margin:0;padding-left:18px}
+.doc-terms li{margin-bottom:9px}
 
 /* printable buyer's guide */
 .buyers-guide{font-size:11px}

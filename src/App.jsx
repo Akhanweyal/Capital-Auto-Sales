@@ -2819,6 +2819,8 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     remarks: s.remarks,
     salesperson: s.salesperson,
     vehicle_price: Number(s.vehicle_price) || 0,
+    accessories: Number(s.accessories) || 0,
+    service_contract_amount: Number(s.service_contract_amount) || 0,
     processing_fee: Number(s.processing_fee) || 0,
     gross_trade_allowance: Number(s.gross_trade_allowance) || 0,
     trade_payoff: Number(s.trade_payoff) || 0,
@@ -2953,6 +2955,10 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
                 <input value={s.buyer.zip} onChange={set("buyer.zip")} />
               </label>
               <label>
+                <span>Email</span>
+                <input value={s.buyer.email} onChange={set("buyer.email")} />
+              </label>
+              <label>
                 <span>Home phone</span>
                 <input value={s.buyer.homePhone} onChange={set("buyer.homePhone")} />
               </label>
@@ -3050,6 +3056,30 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
                 <span>VIN</span>
                 <input value={s.vehicle.vin} onChange={set("vehicle.vin")} />
               </label>
+              <label>
+                <span>Vehicle garaged in (locality)</span>
+                <input value={s.vehicle.garaged} onChange={set("vehicle.garaged")} placeholder="Henrico County" />
+              </label>
+              <label>
+                <span>Delivery date</span>
+                <input type="date" value={s.vehicle.deliveryDate} onChange={set("vehicle.deliveryDate")} />
+              </label>
+              <label>
+                <span>State inspection #</span>
+                <input value={s.vehicle.stateInspectionNo} onChange={set("vehicle.stateInspectionNo")} />
+              </label>
+              <label>
+                <span>Transfer tag #</span>
+                <input value={s.vehicle.transferTagNo} onChange={set("vehicle.transferTagNo")} />
+              </label>
+              <label>
+                <span>Temporary tag #</span>
+                <input value={s.vehicle.tempTagNo} onChange={set("vehicle.tempTagNo")} />
+              </label>
+              <label className="full">
+                <span>Modifications</span>
+                <input value={s.vehicle.modifications} onChange={set("vehicle.modifications")} />
+              </label>
             </div>
           </div>
 
@@ -3085,12 +3115,28 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
                 <input value={s.trade_in.vin} onChange={set("trade_in.vin")} />
               </label>
               <label>
+                <span>Fuel type</span>
+                <input value={s.trade_in.fuelType} onChange={set("trade_in.fuelType")} />
+              </label>
+              <label>
+                <span>Title #</span>
+                <input value={s.trade_in.titleNo} onChange={set("trade_in.titleNo")} />
+              </label>
+              <label>
                 <span>Balance owed to</span>
                 <input value={s.trade_in.balanceOwedTo} onChange={set("trade_in.balanceOwedTo")} />
               </label>
               <label>
                 <span>Balance owed</span>
                 <input value={s.trade_in.balanceOwed} onChange={set("trade_in.balanceOwed")} inputMode="numeric" />
+              </label>
+              <label>
+                <span>Lien account #</span>
+                <input value={s.trade_in.accountNo} onChange={set("trade_in.accountNo")} />
+              </label>
+              <label>
+                <span>Additional liens</span>
+                <input value={s.trade_in.additionalLiens} onChange={set("trade_in.additionalLiens")} />
               </label>
               <label>
                 <span>Good through</span>
@@ -3119,8 +3165,16 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
                 <input value={s.insurance.agent} onChange={set("insurance.agent")} />
               </label>
               <label>
+                <span>Contact</span>
+                <input value={s.insurance.contact} onChange={set("insurance.contact")} />
+              </label>
+              <label>
                 <span>Phone</span>
                 <input value={s.insurance.phone} onChange={set("insurance.phone")} />
+              </label>
+              <label>
+                <span>Expiration date</span>
+                <input type="date" value={s.insurance.expDate} onChange={set("insurance.expDate")} />
               </label>
             </div>
           </div>
@@ -3155,6 +3209,10 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
           <label>
             <span>Vehicle price</span>
             <input value={s.vehicle_price} onChange={set("vehicle_price")} inputMode="numeric" />
+          </label>
+          <label>
+            <span>Accessories</span>
+            <input value={s.accessories} onChange={set("accessories")} inputMode="numeric" />
           </label>
           <label>
             <span>Processing fee</span>
@@ -3222,6 +3280,15 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
             <span>On-line systems filing fee</span>
             <input value={s.online_filing_fee} onChange={set("online_filing_fee")} inputMode="numeric" />
           </label>
+          <label>
+            <span>Service contract amount</span>
+            <input value={s.service_contract_amount} onChange={set("service_contract_amount")} inputMode="numeric" />
+          </label>
+          {Number(s.service_contract_amount) > 0 && (
+            <p className="micro" style={{ marginTop: -6 }}>
+              Tax on service contract (half retail, 4.15%): {moneyCents(totals.serviceContractTax)}
+            </p>
+          )}
           <p className="micro" style={{ marginTop: 10 }}>
             Other charges
           </p>
@@ -3402,8 +3469,14 @@ function SaleDocument({ s, totals }) {
   return (
     <div className="print-area sale-doc">
       <div className="doc-head">
-        <h2>BUYER'S ORDER</h2>
         <div>
+          <h2>{DEALER.name}</h2>
+          <p className="doc-letterhead">
+            {DEALER.address}, {DEALER.city} · {DEALER.phone}
+          </p>
+        </div>
+        <div>
+          <span>BUYER'S ORDER</span>
           <span>DATE: {s.sale_date}</span>
           <span>STOCK #: {s.stock_number}</span>
         </div>
@@ -3418,6 +3491,7 @@ function SaleDocument({ s, totals }) {
             <p>
               {b.city}, {b.state} {b.zip}
             </p>
+            <p>Email {b.email}</p>
             <p>
               Home {b.homePhone} · Cell {b.cellPhone} · Work {b.workPhone}
             </p>
@@ -3442,6 +3516,13 @@ function SaleDocument({ s, totals }) {
             <p>
               VIN {v.vin} · Mileage {miles(v.mileage)}
             </p>
+            <p>
+              Garaged {v.garaged} · Delivery {v.deliveryDate} · State inspection # {v.stateInspectionNo}
+            </p>
+            <p>
+              Transfer tag # {v.transferTagNo} · Temp tag # {v.tempTagNo}
+            </p>
+            {v.modifications && <p>Modifications: {v.modifications}</p>}
           </section>
 
           {hasTrade && (
@@ -3451,11 +3532,15 @@ function SaleDocument({ s, totals }) {
                 {t.year} {t.make} {t.model} {t.body ? `— ${t.body}` : ""}
               </p>
               <p>
-                VIN {t.vin} · Color {t.color} · Mileage {miles(t.mileage)}
+                VIN {t.vin} · Color {t.color} · Mileage {miles(t.mileage)} · Fuel {t.fuelType}
               </p>
+              <p>Title # {t.titleNo}</p>
               <p>
                 Balance owed to {t.balanceOwedTo}: {moneyCents(t.balanceOwed)} · Allowance{" "}
                 {moneyCents(t.allowance)}
+              </p>
+              <p>
+                Lien account # {t.accountNo} · Additional liens {t.additionalLiens}
               </p>
               <p>
                 Good through {t.goodThrough} · Quoted by {t.quotedBy}
@@ -3470,8 +3555,9 @@ function SaleDocument({ s, totals }) {
                 {ins.company} · Policy #{ins.policy}
               </p>
               <p>
-                {ins.agent} · {ins.phone}
+                {ins.agent} {ins.contact && `(${ins.contact})`} · {ins.phone}
               </p>
+              <p>Expires {ins.expDate}</p>
             </section>
           )}
 
@@ -3507,6 +3593,7 @@ function SaleDocument({ s, totals }) {
           <section className="doc-settlement">
             <h4>Settlement</h4>
             <Row label="Vehicle price" value={s.vehicle_price} />
+            {Number(s.accessories) > 0 && <Row label="Accessories" value={s.accessories} />}
             <FeeRow label="Processing fee" value={s.processing_fee} />
             <Row label="Cash price" value={totals.cashPrice} strong />
             <Row label="Gross trade-in allowance" value={s.gross_trade_allowance} />
@@ -3520,6 +3607,12 @@ function SaleDocument({ s, totals }) {
             {Number(s.highway_use_fee) > 0 && <Row label="Highway use fee" value={s.highway_use_fee} />}
             <FeeRow label="Dealer's business license tax" value={s.dealer_biz_tax} />
             <Row label="On-line systems filing fee" value={s.online_filing_fee} />
+            {Number(s.service_contract_amount) > 0 && (
+              <>
+                <Row label="Service contract" value={s.service_contract_amount} />
+                <Row label="Service contract tax (half retail, 4.15%)" value={totals.serviceContractTax} />
+              </>
+            )}
             {(s.other_charges || []).map((c, i) => (
               <Row key={i} label={c.label || "Other charge"} value={c.amount} />
             ))}
@@ -3615,7 +3708,73 @@ function SaleDocument({ s, totals }) {
       </div>
 
       <p className="doc-foot">
-        {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 1 of 1
+        {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 1 of 2
+      </p>
+
+      {/* Independently written to cover the same substantive ground a
+          standard VA buyer's order addresses (trade condition, default/
+          cancellation remedies, warranty disclaimer, title handling,
+          Buyer's Guide incorporation) — not copied from any particular
+          dealer association's copyrighted form. */}
+      <div className="doc-terms">
+        <p className="doc-terms-title">ADDITIONAL TERMS AND CONDITIONS</p>
+        <ol>
+          <li>
+            Any trade-in allowance stated in this Order reflects the vehicle's value as appraised at
+            the time this Order is written, on condition it is delivered to the Dealer in that same
+            condition and with the same equipment. If the trade-in's condition changes before
+            delivery, the Dealer may reappraise it and adjust the allowance accordingly.
+          </li>
+          <li>
+            Purchaser warrants that they own the trade-in vehicle and will deliver it to the Dealer
+            free of any lien, defect, or condition (including salvage, flood, or prior taxi/police
+            use, or a mileage reading known to be inaccurate) not disclosed on this Order. If a
+            trade-in payoff is higher than estimated here, Purchaser agrees to pay the Dealer the
+            difference; if lower, the Dealer will refund the difference to Purchaser.
+          </li>
+          <li>
+            If Purchaser fails or refuses to take delivery of the vehicle as agreed, the Dealer may
+            retain any deposit paid under this Order to the extent of its actual costs, expenses, or
+            losses resulting from that failure or refusal.
+          </li>
+          <li>
+            The Dealer may cancel this Order if Purchaser's financing is not approved on the terms
+            stated, if the trade-in's title or equipment is not delivered as agreed, or if Purchaser
+            fails to sign the documents necessary to complete this sale.
+          </li>
+          <li>
+            The Dealer is not responsible for any delay in delivering the vehicle described in this
+            Order where the delay is caused by circumstances beyond the Dealer's reasonable control.
+          </li>
+          <li>
+            Except as separately stated in writing by the Dealer (including on the Buyers Guide for
+            this vehicle), this vehicle is sold WITHOUT ANY WARRANTY, EXPRESS OR IMPLIED, INCLUDING
+            ANY IMPLIED WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. Purchaser
+            is not entitled to recover consequential damages, loss of use, loss of income, or other
+            incidental damages from the Dealer in connection with this sale. This Order is governed
+            by the laws of the Commonwealth of Virginia.
+          </li>
+          <li>
+            For a cash transaction, title to the vehicle described in this Order does not pass to
+            Purchaser until the Dealer has received payment in full of the amount due on delivery.
+          </li>
+          <li>
+            Any amount shown on this Order as approximate is based on the best information available
+            when this Order was written and is subject to correction once the actual amount is
+            known.
+          </li>
+          <li>
+            The information on the Buyers Guide posted on this vehicle is part of this contract, and
+            overrides any conflicting term in this Order. Under Virginia law, failing to provide the
+            Buyers Guide, or failing to disclose an "AS IS" sale as required on this Order, may
+            subject the Dealer to a civil penalty of up to $1,000 and may allow Purchaser to cancel
+            this sale within 30 days.
+          </li>
+        </ol>
+      </div>
+
+      <p className="doc-foot">
+        {DEALER.name} — {DEALER.address}, {DEALER.city} — {DEALER.phone} · Page 2 of 2
       </p>
     </div>
   );

@@ -197,6 +197,14 @@ alter table public.sales add column if not exists uninsured_motor_vehicle_fee nu
 -- and incorporated into the buyer's order — this tracks that the signed
 -- paper copy has actually been collected, not just printed.
 alter table public.sales add column if not exists buyers_guide_signed       boolean not null default false;
+-- Cross-checked against a real VIADA buyer's order (VIA 7B REV. 7/13) —
+-- these two line items (accessories priced separately from base price, and
+-- a service contract with its own line and tax) were the only settlement
+-- figures missing. Everything else on that reference form (vehicle/trade/
+-- insurance detail fields) lives in the vehicle/trade_in/insurance jsonb
+-- columns already, so no migration needed for those.
+alter table public.sales add column if not exists accessories              numeric not null default 0;
+alter table public.sales add column if not exists service_contract_amount  numeric not null default 0;
 
 -- ---------- dealer-tag test drive log: who drove which vehicle, under which
 -- dealer plate, and when — a record for each vehicle in case of an accident

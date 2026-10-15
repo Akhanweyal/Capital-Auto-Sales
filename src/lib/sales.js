@@ -11,10 +11,13 @@ export function lineTotal(rows) {
 }
 
 export function saleTotals(s) {
-  const cashPrice = num(s.vehicle_price) + num(s.processing_fee);
+  const cashPrice = num(s.vehicle_price) + num(s.accessories) + num(s.processing_fee);
   const netTradeAllowance = num(s.gross_trade_allowance) - num(s.trade_payoff);
   const subtotal = cashPrice - netTradeAllowance;
   const otherChargesTotal = lineTotal(s.other_charges);
+  // MVDB guidance: a service contract's sales tax is owed on half its
+  // retail cost, not the full amount.
+  const serviceContractTax = Math.round(((num(s.service_contract_amount) / 2) * 0.0415) * 100) / 100;
   const taxesFeesTotal =
     num(s.sales_tax) +
     num(s.license_fee) +
@@ -24,6 +27,8 @@ export function saleTotals(s) {
     num(s.dealer_biz_tax) +
     num(s.online_filing_fee) +
     num(s.uninsured_motor_vehicle_fee) +
+    num(s.service_contract_amount) +
+    serviceContractTax +
     otherChargesTotal;
   const totalDue = subtotal + taxesFeesTotal;
   const totalCredit = num(s.deposit) + num(s.down_payment);
@@ -36,6 +41,7 @@ export function saleTotals(s) {
     netTradeAllowance,
     subtotal,
     otherChargesTotal,
+    serviceContractTax,
     taxesFeesTotal,
     totalDue,
     totalCredit,
@@ -63,6 +69,12 @@ export const BLANK_SALE = {
     vin: "",
     mileage: "",
     trans: "",
+    garaged: "",
+    deliveryDate: "",
+    stateInspectionNo: "",
+    modifications: "",
+    transferTagNo: "",
+    tempTagNo: "",
   },
   buyer: {
     name: "",
@@ -70,6 +82,7 @@ export const BLANK_SALE = {
     city: "",
     state: "VA",
     zip: "",
+    email: "",
     homePhone: "",
     cellPhone: "",
     workPhone: "",
@@ -88,17 +101,23 @@ export const BLANK_SALE = {
     vin: "",
     color: "",
     mileage: "",
+    fuelType: "",
+    titleNo: "",
     balanceOwedTo: "",
     balanceOwed: "",
+    accountNo: "",
+    additionalLiens: "",
     allowance: "",
     goodThrough: "",
     quotedBy: "",
   },
-  insurance: { company: "", policy: "", agent: "", phone: "" },
+  insurance: { company: "", policy: "", agent: "", contact: "", phone: "", expDate: "" },
   lien_holder: { company: "", street: "", cityStateZip: "" },
   remarks: "",
   salesperson: "",
   vehicle_price: "",
+  accessories: "",
+  service_contract_amount: "",
   processing_fee: "",
   gross_trade_allowance: "",
   trade_payoff: "",
