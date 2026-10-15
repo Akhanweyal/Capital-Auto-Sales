@@ -43,6 +43,9 @@ export const DEALER = {
   legalName: "Capital Auto Sales LLC",
   phone: "804-372-4422",
   phoneHref: "+18043724422",
+  // Landline — can't receive texts. Texts go to the cell below instead.
+  cellPhone: "804-292-8414",
+  cellPhoneHref: "+18042928414",
   address: "8607 Oakview Ave",
   city: "Henrico, VA 23228",
   hours: "Mon–Sat 9am – 7pm  ·  Sun by appointment",
@@ -313,7 +316,7 @@ function SiteFooter({ go }) {
             {DEALER.phone}
           </a>
           <p>
-            <a href={`sms:${DEALER.phoneHref}`}>Text the same number</a>
+            <a href={`sms:${DEALER.cellPhoneHref}`}>Text {DEALER.cellPhone}</a>
           </p>
         </div>
       </div>
@@ -478,7 +481,7 @@ function Home({ cars, ready, open }) {
             <a className="btn btn-gold" href={`tel:${DEALER.phoneHref}`}>
               Call {DEALER.phone}
             </a>
-            <a className="btn btn-ghost" href={`sms:${DEALER.phoneHref}`}>
+            <a className="btn btn-ghost" href={`sms:${DEALER.cellPhoneHref}`}>
               Send a text
             </a>
           </div>
@@ -642,7 +645,7 @@ function CarPage({ car, ready, go }) {
             </a>
             <a
               className="btn btn-navy wide"
-              href={`sms:${DEALER.phoneHref}?&body=${encodeURIComponent(
+              href={`sms:${DEALER.cellPhoneHref}?&body=${encodeURIComponent(
                 `Hi, I'm interested in the ${title(car)} listed for ${money(car.price)}.`
               )}`}
             >
@@ -667,7 +670,7 @@ function CarPage({ car, ready, go }) {
         <a className="btn btn-gold" href={`tel:${DEALER.phoneHref}`}>
           Call
         </a>
-        <a className="btn btn-ghost" href={`sms:${DEALER.phoneHref}`}>
+        <a className="btn btn-ghost" href={`sms:${DEALER.cellPhoneHref}`}>
           Text
         </a>
       </div>
