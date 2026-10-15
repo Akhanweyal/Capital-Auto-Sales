@@ -44,14 +44,16 @@ async function tryClaude(facts) {
 
 async function tryGemini(facts) {
   if (!process.env.GEMINI_API_KEY) return null;
-  const ai = new GoogleGenAI({});
-  const interaction = await ai.interactions.create({
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    input: `Write a listing description for: ${facts}`,
-    system_instruction: SYSTEM_PROMPT,
-    generation_config: { max_output_tokens: 400 },
+    contents: `Write a listing description for: ${facts}`,
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      maxOutputTokens: 400,
+    },
   });
-  return interaction.output_text ? interaction.output_text.trim() : null;
+  return response.text ? response.text.trim() : null;
 }
 
 export default async function handler(req, res) {
