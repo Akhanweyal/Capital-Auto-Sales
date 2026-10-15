@@ -318,6 +318,49 @@ button{font:inherit;cursor:pointer}
 .doc-signatures{display:flex;justify-content:space-between;gap:16px;margin-top:22px;flex-wrap:wrap}
 .doc-signatures>div{flex:1;min-width:180px}
 .doc-foot{text-align:center;font-size:10px;color:#555;margin-top:18px;border-top:1px solid #ccc;padding-top:6px}
+
+/* buyer's order — visual layout modeled on a real VIADA Buyers Order
+   (VIA 7B), using a plain functional font and continuous bordered-box
+   "ledger" look rather than this site's branded display fonts/rounded
+   cards, since a legal form reads as a legal form, not a marketing page. */
+.vo-doc{background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:1.35}
+.vo-top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #000;padding-bottom:6px}
+.vo-title{font-size:24px;font-weight:800;letter-spacing:.02em;margin:0}
+.vo-stockbox{border:1px solid #000;width:170px;font-size:10px}
+.vo-stockbox div{display:flex;justify-content:space-between;gap:8px;padding:3px 6px;border-bottom:1px solid #000}
+.vo-stockbox div:last-child{border-bottom:0}
+.vo-letterhead{font-size:9px;color:#333;text-align:center;margin:3px 0 8px}
+
+.vo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.vo-col{border:1px solid #000}
+.vf-row{display:flex;flex-wrap:wrap;border-top:1px solid #000}
+.vo-col>.vf-row:first-child{border-top:0}
+.vf{flex:1;min-width:0;padding:3px 6px;border-right:1px solid #000}
+.vf:last-child{border-right:0}
+.vf-full{flex-basis:100%}
+.vf-label{display:block;font-size:7px;text-transform:uppercase;letter-spacing:.02em;color:#444}
+.vf-val{display:block;font-size:11px;font-weight:600;min-height:13px;word-break:break-word}
+.vo-checks{font-size:10px;font-weight:600}
+
+.vo-asis{display:block;padding:0}
+.vo-asis .vf{border-right:0}
+.vo-asis .vf-label{font-size:11px;text-decoration:underline;font-weight:700;color:#000}
+.vo-asis p{font-size:9px;font-weight:700;margin:4px 0}
+
+.vo-trade{position:relative;padding-left:14px}
+.vo-trade-tag{position:absolute;left:2px;top:3px;writing-mode:vertical-rl;font-size:7px;font-weight:700;letter-spacing:.05em}
+
+.vo-noliab{text-align:center;border-top:2px solid #000;padding:6px;margin-top:0;font-weight:800;letter-spacing:.04em;font-size:22px}
+.vo-noliab-sub{font-size:7px;font-weight:700;padding:4px 6px;line-height:1.4;border-top:1px solid #000}
+
+.vn{display:flex;align-items:center;gap:6px;border-top:1px solid #000;padding:2px 6px;font-size:10px}
+.vo-col>.vn:first-of-type{border-top:0}
+.vn-label{flex:1}
+.vn-num{font-size:9px;color:#444;width:22px;text-align:center}
+.vn-val{width:70px;text-align:right;font-weight:600}
+.vn-strong{font-weight:800;background:#f2f2f2}
+
+.doc-terms-exact{font-weight:700;font-size:9px}
 .doc-terms{page-break-before:always;padding-top:18px;font-size:10px;line-height:1.5}
 .doc-terms-title{font-weight:700;text-align:center;font-size:12px;letter-spacing:.04em;margin-bottom:10px}
 .doc-terms ol{margin:0;padding-left:18px}

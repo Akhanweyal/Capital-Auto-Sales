@@ -1205,6 +1205,21 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
                   Sell
                 </button>
               )}
+              {c.published && (
+                <button
+                  className="mini"
+                  onClick={async () => {
+                    const url = `${window.location.origin}/car/${c.id}`;
+                    if (navigator.share) {
+                      navigator.share({ title: title(c), url }).catch(() => {});
+                    } else {
+                      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`, "_blank", "noreferrer");
+                    }
+                  }}
+                >
+                  Share
+                </button>
+              )}
               <button className="mini" onClick={() => patch(c, { featured: !c.featured })}>
                 {c.featured ? "Unfeature" : "Feature"}
               </button>
@@ -1811,6 +1826,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [docPreview, setDocPreview] = useState("");
   const [docsRefreshToken, setDocsRefreshToken] = useState(0);
   const [printDoc, setPrintDoc] = useState(null); // null | 'buyersGuide' | 'notReady'
+  const [suggestingDesc, setSuggestingDesc] = useState(false);
   const [pendingDocs, setPendingDocs] = useState([]);
   const docFileRef = useRef(null);
 
@@ -1936,6 +1952,40 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     const { data } = await supabase.auth.getSession();
     const token = data && data.session && data.session.access_token;
     return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const suggestDescription = async () => {
+    if (!v.year || !v.make || !v.model) {
+      notify("Add year, make, and model first.");
+      return;
+    }
+    setSuggestingDesc(true);
+    try {
+      const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
+      const r = await fetch("/api/suggest-description", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          year: v.year,
+          make: v.make,
+          model: v.model,
+          trim: v.trim,
+          mileage: v.mileage,
+          condition: v.condition,
+          city: DEALER.city,
+        }),
+      });
+      const data = await r.json();
+      if (data.description) {
+        setV((prev) => ({ ...prev, description: data.description }));
+        notify("Description suggested — edit as you like before publishing.");
+      } else {
+        notify(data.error || "Couldn't generate a description.");
+      }
+    } catch (e) {
+      notify("Couldn't reach the server. Check your connection.");
+    }
+    setSuggestingDesc(false);
   };
 
   const findAuctionPhotos = async () => {
@@ -2278,6 +2328,15 @@ function CarForm({ car, onCancel, onSaved, notify }) {
             rows={3}
             placeholder="One owner, clean inside and out, new tires, runs great."
           />
+          <button
+            type="button"
+            className="mini"
+            disabled={suggestingDesc}
+            onClick={suggestDescription}
+            style={{ marginTop: 6 }}
+          >
+            {suggestingDesc ? "Writing…" : "✨ Suggest description"}
+          </button>
         </label>
         <label className="check full">
           <input type="checkbox" checked={!!v.featured} onChange={set("featured")} />
@@ -3496,6 +3555,29 @@ const WARRANTY_DOC_LABEL = {
   implied_only: "IMPLIED WARRANTIES ONLY",
 };
 
+// A label-above-value cell, bordered on the right — the reference form's
+// basic building block, repeated for every field.
+function VF({ label, value, full, children }) {
+  return (
+    <div className={"vf" + (full ? " vf-full" : "")}>
+      <span className="vf-label">{label}</span>
+      <span className="vf-val">{children || value || " "}</span>
+    </div>
+  );
+}
+
+// One numbered settlement line (right column, items (1)-(21) on the
+// reference form).
+function VN({ n, label, value, strong }) {
+  return (
+    <div className={"vn" + (strong ? " vn-strong" : "")}>
+      <span className="vn-label">{label}</span>
+      <span className="vn-num">({n})</span>
+      <span className="vn-val">{value === "" || value == null ? "" : moneyCents(value)}</span>
+    </div>
+  );
+}
+
 function SaleDocument({ s, totals }) {
   const v = s.vehicle || {};
   const b = s.buyer || {};
@@ -3503,247 +3585,238 @@ function SaleDocument({ s, totals }) {
   const ins = s.insurance || {};
   const lien = s.lien_holder || {};
   const hasTrade = t.year || t.make || t.vin;
-  const hasInsurance = ins.company || ins.policy;
-  const hasLien = lien.company;
 
   return (
-    <div className="print-area sale-doc">
-      <div className="doc-head">
-        <div>
-          <h2>{DEALER.legalName}</h2>
-          <p className="doc-letterhead">
-            {DEALER.address}, {DEALER.city} · {DEALER.phone}
-          </p>
-        </div>
-        <div>
-          <span>BUYER'S ORDER</span>
-          <span>DATE: {s.sale_date}</span>
-          <span>STOCK #: {s.stock_number}</span>
+    <div className="print-area vo-doc">
+      <div className="vo-top">
+        <h2 className="vo-title">BUYERS ORDER</h2>
+        <div className="vo-stockbox">
+          <div>
+            <span className="vf-label">Stock No.</span>
+            <span>{s.stock_number}</span>
+          </div>
+          <div>
+            <span className="vf-label">Date</span>
+            <span>{s.sale_date}</span>
+          </div>
         </div>
       </div>
+      <p className="vo-letterhead">
+        {DEALER.legalName} — {DEALER.address}, {DEALER.city} — {DEALER.phone}
+      </p>
 
-      <div className="doc-grid">
-        <div className="doc-col">
-          <section>
-            <h4>Buyer information</h4>
-            <p>{b.name}</p>
-            <p>{b.address}</p>
-            <p>
-              {b.city}, {b.state} {b.zip}
-            </p>
-            <p>Email {b.email}</p>
-            <p>
-              Home {b.homePhone} · Cell {b.cellPhone} · Work {b.workPhone}
-            </p>
-            <p>
-              DL/State ID # {b.dlNumber} ({b.dlState}) · DOB {b.dob}
-            </p>
-            <p>
-              County {b.county} · Exp {b.dlExp}
-            </p>
-            {s.co_buyer_name && <p>Co-buyer: {s.co_buyer_name}</p>}
-          </section>
+      <div className="vo-grid">
+        <div className="vo-col">
+          <div className="vf-row">
+            <VF label="Purchaser's Name" value={b.name} full />
+          </div>
+          <div className="vf-row">
+            <VF label="Co-Purchaser's Name" value={s.co_buyer_name} full />
+          </div>
+          <div className="vf-row">
+            <VF label="Please enter my order for" full>
+              <span className="vo-checks">
+                <b>{v.newUsed === "New" ? "☒" : "☐"}</b> NEW &nbsp;&nbsp;
+                <b>{v.newUsed === "Used" ? "☒" : "☐"}</b> USED &nbsp;&nbsp;
+                <b>{v.newUsed === "Demo" ? "☒" : "☐"}</b> DEMO
+              </span>
+            </VF>
+          </div>
+          <div className="vf-row">
+            <VF label="Year" value={v.year} />
+            <VF label="Make" value={v.make} />
+            <VF label="Model" value={v.model} />
+            <VF label="Type/Doors" value={v.body} />
+          </div>
+          <div className="vf-row">
+            <VF label="Color" value={v.color1} />
+            <VF label="VIN" value={v.vin} full />
+          </div>
+          <div className="vf-row">
+            <VF label="Modifications" value={v.modifications} full />
+          </div>
+          <div className="vf-row">
+            <VF label="Lien Holder" value={lien.company} full />
+          </div>
+          <div className="vf-row">
+            <VF label="Address" value={lien.street} full />
+          </div>
+          <div className="vf-row">
+            <VF label="City/State/Zip" value={lien.cityStateZip} full />
+          </div>
 
-          <section>
-            <h4>Vehicle information — {v.newUsed}</h4>
-            <p>
-              {v.year} {v.make} {v.model} {v.trim} {v.body ? `— ${v.body}` : ""}
-            </p>
-            <p>
-              Color {v.color1}
-              {v.color2 ? ` / ${v.color2}` : ""} · Style {v.style} · Cyl {v.cyl} · Trans {v.trans}
-            </p>
-            <p>
-              VIN {v.vin} · Mileage {miles(v.mileage)}
-            </p>
-            <p>
-              Garaged {v.garaged} · Delivery {v.deliveryDate} · State inspection # {v.stateInspectionNo}
-            </p>
-            <p>
-              Transfer tag # {v.transferTagNo} · Temp tag # {v.tempTagNo}
-            </p>
-            {v.modifications && <p>Modifications: {v.modifications}</p>}
-          </section>
+          <div className="vf-row vo-asis">
+            <div className="vf vf-full">
+              <span className="vf-label">{WARRANTY_DOC_LABEL[s.warranty_type] || WARRANTY_DOC_LABEL.as_is}</span>
+              {s.warranty_type === "as_is" ? (
+                <>
+                  <p>
+                    I understand that this vehicle is being sold "as is" with all faults and is not covered
+                    by any dealer warranty. I understand that the dealer is not required to make any repairs
+                    after I buy this vehicle. I will have to pay for any repairs this vehicle will need.
+                  </p>
+                  <p className="doc-sign-line">Date: _______________ Signature: X ___________________________</p>
+                </>
+              ) : s.warranty_type === "implied_only" ? (
+                <p>
+                  The dealer doesn't make any promises to fix things that need repair when you buy the
+                  vehicle or afterward. Implied warranties under Virginia law may give you some rights.
+                </p>
+              ) : (
+                <p>
+                  {s.warranty_type === "dealer_limited" &&
+                    `Dealer pays ${s.warranty_pct_labor || 0}% labor / ${s.warranty_pct_parts || 0}% parts. `}
+                  Systems covered: {s.warranty_systems || "—"}. Duration: {s.warranty_duration || "—"}.
+                </p>
+              )}
+              <p className="vf-label" style={{ marginTop: 4 }}>
+                Buyer's Guide:{" "}
+                {s.buyers_guide_signed ? "attached, signed and dated by buyer" : "☐ attach signed, dated copy before delivery"}
+              </p>
+            </div>
+          </div>
+
+          <div className="vf-row">
+            <VF label="Existing Lien Holder" value={t.balanceOwedTo} />
+            <VF label="Account No." value={t.accountNo} />
+          </div>
+          <div className="vf-row">
+            <VF label="Quoted By" value={t.quotedBy} />
+            <VF label="Good Until" value={t.goodThrough} />
+            <VF label="Additional Liens" value={t.additionalLiens} />
+          </div>
 
           {hasTrade && (
-            <section>
-              <h4>Trade-in information</h4>
-              <p>
-                {t.year} {t.make} {t.model} {t.body ? `— ${t.body}` : ""}
-              </p>
-              <p>
-                VIN {t.vin} · Color {t.color} · Mileage {miles(t.mileage)} · Fuel {t.fuelType}
-              </p>
-              <p>Title # {t.titleNo}</p>
-              <p>
-                Balance owed to {t.balanceOwedTo}: {moneyCents(t.balanceOwed)} · Allowance{" "}
-                {moneyCents(t.allowance)}
-              </p>
-              <p>
-                Lien account # {t.accountNo} · Additional liens {t.additionalLiens}
-              </p>
-              <p>
-                Good through {t.goodThrough} · Quoted by {t.quotedBy}
-              </p>
-            </section>
+            <>
+              <div className="vf-row vo-trade">
+                <span className="vo-trade-tag">TRADE</span>
+                <VF label="Year" value={t.year} />
+                <VF label="Make" value={t.make} />
+                <VF label="Model" value={t.model} />
+                <VF label="Type/Doors" value={t.body} />
+              </div>
+              <div className="vf-row vo-trade">
+                <span className="vo-trade-tag" />
+                <VF label="Color" value={t.color} />
+                <VF label="Mileage" value={t.mileage && miles(t.mileage)} />
+                <VF label="Fuel Type" value={t.fuelType} />
+                <VF label="Title No." value={t.titleNo} />
+              </div>
+              <div className="vf-row vo-trade">
+                <span className="vo-trade-tag" />
+                <VF label="VIN" value={t.vin} full />
+              </div>
+            </>
           )}
 
-          {hasInsurance && (
-            <section>
-              <h4>Insurance</h4>
-              <p>
-                {ins.company} · Policy #{ins.policy}
-              </p>
-              <p>
-                {ins.agent} {ins.contact && `(${ins.contact})`} · {ins.phone}
-              </p>
-              <p>Expires {ins.expDate}</p>
-            </section>
-          )}
+          <div className="vf-row">
+            <VF label="Transfer Tag No." value={v.transferTagNo} />
+            <VF label="Temporary Tag No." value={v.tempTagNo} />
+          </div>
+          <div className="vf-row">
+            <VF label="Insurance Company" value={ins.company} />
+            <VF label="Agent" value={ins.agent} />
+          </div>
+          <div className="vf-row">
+            <VF label="Policy No." value={ins.policy} />
+            <VF label="Contact" value={ins.contact} />
+          </div>
+          <div className="vf-row">
+            <VF label="Exp. Date" value={ins.expDate} />
+            <VF label="Phone No." value={ins.phone} />
+          </div>
 
-          {hasLien && (
-            <section>
-              <h4>Lien holder</h4>
-              <p>{lien.company}</p>
-              <p>{lien.street}</p>
-              <p>{lien.cityStateZip}</p>
-            </section>
-          )}
+          <div className="vo-noliab">NO LIABILITY INSURANCE INCLUDED</div>
+          <p className="vo-noliab-sub">
+            THE FRONT AND BACK OF THIS ORDER, ALONG WITH OTHER DOCUMENTS SIGNED BY THE PURCHASER(S) IN
+            CONNECTION WITH THIS ORDER, INCLUDING ANY RETAIL INSTALLMENT SALES CONTRACT, COMPRISE THE ENTIRE
+            AGREEMENT AFFECTING THIS PURCHASE. NO ORAL AGREEMENTS OR UNDERSTANDINGS WILL BE BINDING.
+          </p>
+        </div>
 
+        <div className="vo-col">
+          <div className="vf-row">
+            <VF label="Address" value={b.address} full />
+          </div>
+          <div className="vf-row">
+            <VF label="City" value={b.city} />
+            <VF label="State" value={b.state} />
+            <VF label="Zip" value={b.zip} />
+          </div>
+          <div className="vf-row">
+            <VF label="Vehicle Garaged" value={v.garaged} />
+            <VF label="E-Mail" value={b.email} />
+          </div>
+          <div className="vf-row">
+            <VF label="Home Phone" value={b.homePhone} />
+            <VF label="Work Phone" value={b.workPhone} />
+          </div>
+          <div className="vf-row">
+            <VF label="Mileage" value={v.mileage && miles(v.mileage)} />
+            <VF label="Mobile Phone" value={b.cellPhone} />
+          </div>
+          <div className="vf-row">
+            <VF label="Delivery Date" value={v.deliveryDate} />
+            <VF label="State Inspection No." value={v.stateInspectionNo} />
+          </div>
+
+          <VN n={1} label="Base Price" value={s.vehicle_price} />
+          <VN n={2} label="Accessories" value={s.accessories} />
+          <VN n={4} label="Processing Fee" value={s.processing_fee} />
+          <VN n={5} label="Subtotal (Taxable) (1+2+3+4)" value={totals.cashPrice} strong />
+          <VN n={6} label="Trade Allowance" value={s.gross_trade_allowance} />
+          <VN n={7} label="Approx. Balance" value={s.trade_payoff} />
+          <VN n={8} label="Trade Equity (6-7)" value={totals.netTradeAllowance} strong />
+          <VN n={9} label="Trade Difference (5-8)" value={totals.subtotal} strong />
+          <VN n={10} label="VA Sales & Use Tax" value={s.sales_tax} />
+          <VN n={11} label="DMV: License/Title/Reg./Highway Use" value={Number(s.license_fee) + Number(s.title_fee) + Number(s.registration_fee) + Number(s.highway_use_fee)} />
+          <VN n={13} label="Dealer's Business License Tax" value={s.dealer_biz_tax} />
+          <VN n={14} label="Service Contract + Tax" value={Number(s.service_contract_amount) + Number(totals.serviceContractTax)} />
+          <VN n={15} label="On-Line Systems Filing Fee" value={s.online_filing_fee} />
+          {(s.other_charges || []).map((c, i) => (
+            <VN key={i} n="16" label={c.label || "Other charge"} value={c.amount} />
+          ))}
+          <VN n={17} label="Subtotal (9+10+11+13+14+15+16)" value={totals.totalDue} strong />
+          <VN n={18} label="Deposit with Order" value={s.deposit} />
+          <VN n={19} label="Payment Due on Delivery" value={s.down_payment} />
+          <VN n={20} label="Total Down Payment (18+19)" value={totals.totalCredit} strong />
+          <VN n={21} label="BALANCE TO BE FINANCED (17-20)" value={totals.balanceDue} strong />
+          <p className="vf-label" style={{ marginTop: 6, textAlign: "right" }}>
+            Payment: {s.payment_type === "finance" ? "Finance — see reverse side (#9)" : "Cash"}
+          </p>
+
+          <div className="vf-row" style={{ marginTop: 16 }}>
+            <VF label="Salesperson" value={s.salesperson} full />
+          </div>
           {s.remarks && (
-            <section>
-              <h4>Remarks</h4>
-              <p>{s.remarks}</p>
-            </section>
+            <div className="vf-row">
+              <VF label="Remarks" value={s.remarks} full />
+            </div>
           )}
         </div>
-
-        <div className="doc-col">
-          <section>
-            <h4>Seller information</h4>
-            <p>
-              <strong>{DEALER.legalName}</strong>
-            </p>
-            <p>{DEALER.address}</p>
-            <p>{DEALER.city}</p>
-            <p>{DEALER.phone}</p>
-            <p>Salesperson: {s.salesperson}</p>
-          </section>
-
-          <section className="doc-settlement">
-            <h4>Settlement</h4>
-            <Row label="Vehicle price" value={s.vehicle_price} />
-            {Number(s.accessories) > 0 && <Row label="Accessories" value={s.accessories} />}
-            <FeeRow label="Processing fee" value={s.processing_fee} />
-            <Row label="Cash price" value={totals.cashPrice} strong />
-            <Row label="Gross trade-in allowance" value={s.gross_trade_allowance} />
-            <Row label="Less payoff" value={s.trade_payoff} />
-            <Row label="Net trade-in allowance" value={totals.netTradeAllowance} strong />
-            <Row label="Subtotal" value={totals.subtotal} strong />
-            <Row label="4.15% VA sales & use tax" value={s.sales_tax} />
-            <Row label="License fee" value={s.license_fee} />
-            <Row label="Title fee" value={s.title_fee} />
-            <Row label="Registration fee" value={s.registration_fee} />
-            {Number(s.highway_use_fee) > 0 && <Row label="Highway use fee" value={s.highway_use_fee} />}
-            <FeeRow label="Dealer's business license tax" value={s.dealer_biz_tax} />
-            <Row label="On-line systems filing fee" value={s.online_filing_fee} />
-            {Number(s.service_contract_amount) > 0 && (
-              <>
-                <Row label="Service contract" value={s.service_contract_amount} />
-                <Row label="Service contract tax (half retail, 4.15%)" value={totals.serviceContractTax} />
-              </>
-            )}
-            {(s.other_charges || []).map((c, i) => (
-              <Row key={i} label={c.label || "Other charge"} value={c.amount} />
-            ))}
-            <Row label="Total due" value={totals.totalDue} strong />
-            <Row label="Deposit" value={s.deposit} />
-            <Row label="Total down payment" value={s.down_payment} />
-            <Row label="Total credit" value={totals.totalCredit} strong />
-            <Row label="Balance due" value={totals.balanceDue} strong big />
-            <p className="micro" style={{ marginTop: 6 }}>
-              Payment: {s.payment_type === "finance" ? "Finance" : "Cash"}
-            </p>
-          </section>
-        </div>
       </div>
-
-      <div className="doc-warranty">
-        <p className="doc-warranty-type">{WARRANTY_DOC_LABEL[s.warranty_type] || WARRANTY_DOC_LABEL.as_is}</p>
-        {s.warranty_type === "as_is" && (
-          // MVDB-44 exact required wording — must be on the front of the
-          // order, bold, 10pt+, and signed by the buyer.
-          <>
-            <p>
-              I understand that this vehicle is being sold "as is" with all faults and is not covered by any
-              dealer warranty. I understand that the dealer is not required to make any repairs after I buy this
-              vehicle. I will have to pay for any repairs this vehicle will need.
-            </p>
-            <p className="doc-sign-line">Date: _______________ Signature: X ___________________________</p>
-          </>
-        )}
-        {(s.warranty_type === "dealer_full" || s.warranty_type === "dealer_limited") && (
-          <p>
-            {s.warranty_type === "dealer_limited" &&
-              `The dealer will pay ${s.warranty_pct_labor || 0}% of labor and ${s.warranty_pct_parts || 0}% of parts for the covered systems that fail during the warranty period. `}
-            Systems covered: {s.warranty_systems || "—"}. Duration: {s.warranty_duration || "—"}. Ask the
-            dealer for a copy of the warranty document.
-          </p>
-        )}
-        {s.warranty_type === "implied_only" && (
-          <p>
-            The dealer doesn't make any promises to fix things that need repair when you buy the vehicle or
-            afterward. Implied warranties under Virginia law may give you some rights to have the dealer take
-            care of serious problems that were not apparent when you bought the vehicle.
-          </p>
-        )}
-        <p className="micro" style={{ marginTop: 6 }}>
-          Buyer's Guide: {s.buyers_guide_signed ? "attached, signed and dated by buyer" : "☐ attach signed, dated copy before delivery"}
-        </p>
-      </div>
-
-      {s.payment_type === "finance" && (
-        <div className="doc-financing">
-          IF YOU ARE FINANCING THIS VEHICLE PLEASE READ THIS NOTICE. YOU ARE PROPOSING TO ENTER INTO A RETAIL
-          INSTALLMENT SALES CONTRACT WITH THE DEALER. PART OF YOUR CONTRACT INVOLVES FINANCING THE PURCHASE OF
-          YOUR VEHICLE. IF YOU ARE FINANCING THIS VEHICLE AND THE DEALER INTENDS TO TRANSFER YOUR FINANCING TO A
-          FINANCE PROVIDER SUCH AS A BANK, CREDIT UNION OR OTHER LENDER, YOUR VEHICLE PURCHASE DEPENDS ON THE
-          FINANCE PROVIDER'S APPROVAL OF YOUR PROPOSED RETAIL INSTALLMENT SALES CONTRACT. IF YOUR RETAIL
-          INSTALLMENT SALES CONTRACT IS APPROVED WITHOUT A CHANGE THAT INCREASES THE COST OR RISK TO YOU OR THE
-          DEALER, YOUR PURCHASE CANNOT BE CANCELLED. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS NOT APPROVED
-          THE DEALER WILL NOTIFY YOU VERBALLY OR IN WRITING. YOU CAN THEN DECIDE TO PAY FOR THE VEHICLE IN SOME
-          OTHER WAY OR YOU OR THE DEALER CAN CANCEL YOUR PURCHASE. IF THE SALE IS CANCELLED, YOU NEED TO RETURN
-          THE VEHICLE TO THE DEALER WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE IN THE SAME CONDITION IT WAS
-          GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR. ANY DOWN PAYMENT OR TRADE-IN YOU GAVE THE DEALER WILL BE
-          RETURNED TO YOU. IF YOU DO NOT RETURN THE VEHICLE WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE OF
-          CANCELLATION, THE DEALER MAY LOCATE THE VEHICLE AND TAKE IT BACK WITHOUT FURTHER NOTICE TO YOU AS LONG
-          AS THE DEALER FOLLOWS THE LAW AND DOES NOT CAUSE A BREACH OF THE PEACE WHEN TAKING THE VEHICLE BACK. IF
-          THE DEALER DOES NOT RETURN YOUR DOWN PAYMENT AND ANY TRADE-IN WHEN THE DEALER GETS THE VEHICLE BACK IN
-          THE SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR, THE DEALER MAY BE LIABLE TO
-          YOU UNDER THE VIRGINIA CONSUMER PROTECTION ACT.
-        </div>
-      )}
-
-      <div className="doc-noliab">NO LIABILITY INSURANCE INCLUDED</div>
 
       <p className="doc-legal">
-        By executing this order, Buyer acknowledges that they have read and agree to be bound by all of its
-        terms, and that Buyer has received a fully completed copy. Buyer certifies they are 18 years of age or
-        older.
+        If there are any inconsistencies between this Order and any other document signed by the
+        Purchaser(s), the terms of this Order prevail. Purchaser(s) acknowledges that they have been given
+        the opportunity to review all documents prior to signing and have not signed any documents in blank.
+        By executing this order, Purchaser(s) acknowledges that they have read and agree to be bound by all
+        of its terms and has received a fully completed copy. Purchaser(s) certifies that they are 18 years
+        of age or older.
       </p>
 
       <div className="doc-signatures">
         <div>
           <span className="doc-sign-line">X ___________________________ ___________</span>
-          <span className="micro">BUYER · DATE</span>
+          <span className="micro">PURCHASER · DRIVERS LIC # ____________ · DATE</span>
         </div>
         <div>
           <span className="doc-sign-line">X ___________________________ ___________</span>
-          <span className="micro">CO-BUYER · DATE</span>
+          <span className="micro">CO-PURCHASER · DRIVERS LIC # ____________ · DATE</span>
         </div>
         <div>
           <span className="doc-sign-line">X ___________________________ ___________</span>
-          <span className="micro">ACCEPTED BY AUTHORIZED REPRESENTATIVE · DATE</span>
+          <span className="micro">AUTHORIZED REPRESENTATIVE OF DEALERSHIP · DATE</span>
         </div>
       </div>
 
@@ -3803,6 +3876,32 @@ function SaleDocument({ s, totals }) {
             when this Order was written and is subject to correction once the actual amount is
             known.
           </li>
+          {s.payment_type === "finance" && (
+            // Exact required wording per MVDB-44, not paraphrased — this
+            // one (unlike the rest of this page) is government-mandated
+            // text, same source as the AS-IS clause.
+            <li className="doc-terms-exact">
+              IF YOU ARE FINANCING THIS VEHICLE PLEASE READ THIS NOTICE. YOU ARE PROPOSING TO ENTER INTO
+              A RETAIL INSTALLMENT SALES CONTRACT WITH THE DEALER. PART OF YOUR CONTRACT INVOLVES
+              FINANCING THE PURCHASE OF YOUR VEHICLE. IF YOU ARE FINANCING THIS VEHICLE AND THE DEALER
+              INTENDS TO TRANSFER YOUR FINANCING TO A FINANCE PROVIDER SUCH AS A BANK, CREDIT UNION OR
+              OTHER LENDER, YOUR VEHICLE PURCHASE DEPENDS ON THE FINANCE PROVIDER'S APPROVAL OF YOUR
+              PROPOSED RETAIL INSTALLMENT SALES CONTRACT. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS
+              APPROVED WITHOUT A CHANGE THAT INCREASES THE COST OR RISK TO YOU OR THE DEALER, YOUR
+              PURCHASE CANNOT BE CANCELLED. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS NOT APPROVED THE
+              DEALER WILL NOTIFY YOU VERBALLY OR IN WRITING. YOU CAN THEN DECIDE TO PAY FOR THE VEHICLE IN
+              SOME OTHER WAY OR YOU OR THE DEALER CAN CANCEL YOUR PURCHASE. IF THE SALE IS CANCELLED, YOU
+              NEED TO RETURN THE VEHICLE TO THE DEALER WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE IN THE
+              SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR. ANY DOWN PAYMENT OR
+              TRADE-IN YOU GAVE THE DEALER WILL BE RETURNED TO YOU. IF YOU DO NOT RETURN THE VEHICLE
+              WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE OF CANCELLATION, THE DEALER MAY LOCATE THE
+              VEHICLE AND TAKE IT BACK WITHOUT FURTHER NOTICE TO YOU AS LONG AS THE DEALER FOLLOWS THE LAW
+              AND DOES NOT CAUSE A BREACH OF THE PEACE WHEN TAKING THE VEHICLE BACK. IF THE DEALER DOES
+              NOT RETURN YOUR DOWN PAYMENT AND ANY TRADE-IN WHEN THE DEALER GETS THE VEHICLE BACK IN THE
+              SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR, THE DEALER MAY BE
+              LIABLE TO YOU UNDER THE VIRGINIA CONSUMER PROTECTION ACT.
+            </li>
+          )}
           <li>
             The information on the Buyers Guide posted on this vehicle is part of this contract, and
             overrides any conflicting term in this Order. Under Virginia law, failing to provide the
