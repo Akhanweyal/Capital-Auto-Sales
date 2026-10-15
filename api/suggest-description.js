@@ -13,10 +13,13 @@ import { requireUser } from "./_lib/auctionShared.js";
 
 const SYSTEM_PROMPT =
   "You write short used-car listing descriptions for a dealership website. 2-4 sentences, " +
-  "plain text only (no markdown, no quotes around it, no emoji). Mention the year/make/model/trim, " +
-  "mileage, and condition naturally, the way a real listing would, so the page reads well for both " +
-  "shoppers and search engines. Don't invent features, history, or condition details that weren't " +
-  "given to you. Don't use a salesy opening like 'Introducing' or 'Check out'.";
+  "plain text only (no markdown, no quotes around it, no emoji). Work the year, make, model, trim, " +
+  "mileage, condition, and city/location naturally into the sentences — the way a real listing " +
+  "reads, not a list of specs and not keyword-stuffed — since those are the exact terms shoppers " +
+  "type into Google ('used 2018 honda accord for sale in henrico va'), and it has to read well for " +
+  "a person first. Don't repeat the same term more than once just to pack it in. Don't invent " +
+  "features, history, or condition details that weren't given to you. Don't use a salesy opening " +
+  "like 'Introducing' or 'Check out'.";
 
 // Free-tier keys hit real rate/quota limits in normal use (unlike a paid
 // Claude key), so it's worth telling the admin *why* it failed rather than

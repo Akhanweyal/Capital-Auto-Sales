@@ -6,6 +6,11 @@
 // Real browsers get the exact same shell (same script tags), so the app boots
 // and takes over routing normally once it loads.
 
+// Kept local to this file rather than imported from src/App.jsx's DEALER
+// constant — this is a separate serverless function with its own small
+// dependency surface, not part of the client bundle.
+const CITY = "Henrico, VA";
+
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
     Number(n) || 0
@@ -22,7 +27,7 @@ async function fetchCar(id) {
 
   const api =
     `${url}/rest/v1/cars?id=eq.${encodeURIComponent(id)}&published=eq.true` +
-    `&select=year,make,model,trim,price,mileage,description,cover_url,sold,vin&limit=1`;
+    `&select=year,make,model,trim,price,mileage,condition,description,cover_url,sold,vin&limit=1`;
 
   const r = await fetch(api, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
   if (!r.ok) return null;
@@ -32,10 +37,13 @@ async function fetchCar(id) {
 
 function withCarMeta(html, car, pageUrl) {
   const title = `${car.year} ${car.make} ${car.model}${car.trim ? " " + car.trim : ""}`.trim();
-  const fullTitle = `${title} — ${money(car.price)} | Capital Auto Sales`;
+  // "for sale in <city>" matches how people actually search for a used car
+  // ("2018 honda accord for sale in henrico va") — the single highest-value
+  // phrase to have in the title for local search intent.
+  const fullTitle = `${title} for sale in ${CITY} — ${money(car.price)} | Capital Auto Sales`;
   const desc =
     (car.description && car.description.trim()) ||
-    `${miles(car.mileage)} miles, ${car.year} ${car.make} ${car.model}. Call or text 804-372-4422 for details.`;
+    `${miles(car.mileage)}-mile ${car.condition ? car.condition.toLowerCase() + "-condition " : ""}${title} for sale in ${CITY}. Call or text 804-372-4422 for details.`;
 
   let out = html
     .replace(/<title>.*?<\/title>/, `<title>${esc(fullTitle)}</title>`)
@@ -69,24 +77,33 @@ function withCarMeta(html, car, pageUrl) {
       );
   }
 
-  const productLd = {
+  // schema.org/Vehicle rather than the generic Product type — Google
+  // specifically recognizes Vehicle markup for used-car listings (mileage,
+  // VIN, model year as their own structured fields), which plain Product
+  // schema can't express and generic listings don't get.
+  const vehicleLd = {
     "@context": "https://schema.org",
-    "@type": "Product",
+    "@type": "Vehicle",
     name: title,
     description: desc,
     brand: { "@type": "Brand", name: car.make },
+    model: car.model,
+    vehicleModelDate: String(car.year),
+    mileageFromOdometer: { "@type": "QuantitativeValue", value: Number(car.mileage) || 0, unitCode: "SMI" },
+    itemCondition: "https://schema.org/UsedCondition",
     offers: {
       "@type": "Offer",
       priceCurrency: "USD",
       price: Number(car.price) || 0,
       availability: car.sold ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
       url: pageUrl || undefined,
+      areaServed: CITY,
     },
   };
-  if (car.cover_url) productLd.image = car.cover_url;
-  if (car.vin) productLd.sku = car.vin;
+  if (car.cover_url) vehicleLd.image = car.cover_url;
+  if (car.vin) vehicleLd.vehicleIdentificationNumber = car.vin;
 
-  const ldJson = JSON.stringify(productLd).replace(/</g, "\\u003c");
+  const ldJson = JSON.stringify(vehicleLd).replace(/</g, "\\u003c");
   out = out.replace("</head>", `    <script type="application/ld+json">${ldJson}</script>\n  </head>`);
 
   return out;
