@@ -43,7 +43,7 @@ function withCarMeta(html, car, pageUrl) {
   const fullTitle = `${title} for sale in ${CITY} — ${money(car.price)} | Capital Auto Sales`;
   const desc =
     (car.description && car.description.trim()) ||
-    `${miles(car.mileage)}-mile ${car.condition ? car.condition.toLowerCase() + "-condition " : ""}${title} for sale in ${CITY}. Call or text 804-372-4422 for details.`;
+    `${miles(car.mileage)}-mile ${car.condition ? car.condition.toLowerCase() + "-condition " : ""}${title} for sale in ${CITY}. Call 804-372-4422 or text 804-292-8414 for details.`;
 
   let out = html
     .replace(/<title>.*?<\/title>/, `<title>${esc(fullTitle)}</title>`)

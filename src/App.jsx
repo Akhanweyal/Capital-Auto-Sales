@@ -26,7 +26,7 @@ import {
   fetchTeam,
   setTeamRole,
 } from "./lib/db.js";
-import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv } from "./lib/sales.js";
+import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv, todayLocal, num, SERVICE_CONTRACT_TAX_RATE } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
 import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
@@ -49,6 +49,13 @@ export const DEALER = {
   address: "8607 Oakview Ave",
   city: "Henrico, VA 23228",
   hours: "Mon–Sat 9am – 7pm  ·  Sun by appointment",
+  // The processing fee you charge on every sale, in dollars (0 = none).
+  // Va. Code § 46.2-1581(8): when a price is advertised without this fee
+  // included, the fee's amount has to be shown with it — so this prints
+  // next to every price on the website and pre-fills each buyer's order.
+  processingFee: 0,
+  // Printed on the back of the Buyers Guide; leave "" if there isn't one.
+  email: "",
 };
 
 /* ---------- helpers ---------- */
@@ -93,6 +100,32 @@ function PrintPortal({ children }) {
     };
   }, []);
   return createPortal(children, elRef.current);
+}
+
+// Which printable document is showing, if any. Clears itself once the print
+// dialog closes, so picking the same document a second time prints again.
+function usePrintDoc() {
+  const [printDoc, setPrintDoc] = useState(null);
+  useEffect(() => {
+    if (!printDoc) return;
+    const done = () => setPrintDoc(null);
+    window.addEventListener("afterprint", done);
+    const t = setTimeout(() => window.print(), 50);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("afterprint", done);
+    };
+  }, [printDoc]);
+  return [printDoc, setPrintDoc];
+}
+
+function PriceNote() {
+  return (
+    <p className="price-note">
+      Price excludes tax, title and tags
+      {DEALER.processingFee > 0 ? ` and a ${money(DEALER.processingFee)} dealer processing fee` : ""}.
+    </p>
+  );
 }
 
 function setPath(obj, path, value) {
@@ -384,8 +417,8 @@ function Home({ cars, ready, open }) {
             with the price up front.
           </h1>
           <p className="hero-sub">
-            Browse what's here right now. See something you like — call or text {DEALER.phone} and we'll
-            have the keys ready when you pull in.
+            Browse what's here right now. See something you like — call {DEALER.phone} or text{" "}
+            {DEALER.cellPhone} and we'll have the keys ready when you pull in.
           </p>
         </div>
         <div className="wrap">
@@ -469,6 +502,7 @@ function Home({ cars, ready, open }) {
             ))}
           </div>
         )}
+        {ready && list.length > 0 && <PriceNote />}
       </section>
 
       <section className="band">
@@ -597,7 +631,7 @@ function CarPage({ car, ready, go }) {
 
           <div className="desc">
             <p className="micro gold">About this vehicle</p>
-            <p>{car.description || "Call or text us for full details on this vehicle."}</p>
+            <p>{car.description || "Call or text us for full details on this used vehicle."}</p>
             {car.vin && (
               <p className="vin">
                 <em>VIN</em> {car.vin}
@@ -613,6 +647,7 @@ function CarPage({ car, ready, go }) {
           <p className="micro gold">{car.sold ? "No longer available" : "Available now"}</p>
           <h1>{title(car)}</h1>
           <p className="price big">{money(car.price)}</p>
+          <PriceNote />
           <Rule />
           <dl className="specs">
             <div>
@@ -746,26 +781,32 @@ function LeadForm({ car }) {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Hidden from people; form-filling bots fill it in, and those get dropped.
+  const [website, setWebsite] = useState("");
 
   const submit = async () => {
-    if (!name.trim() || !phone.trim()) {
-      setErr("Add your name and a number we can reach you at.");
+    if (!name.trim() || phone.replace(/\D/g, "").length < 7) {
+      setErr("Add your name and a phone number we can reach you at.");
+      return;
+    }
+    if (website) {
+      setSent(true);
       return;
     }
     setErr("");
     setBusy(true);
     try {
       await createLead({
-        name: name.trim(),
-        phone: phone.trim(),
-        note: note.trim(),
+        name: name.trim().slice(0, 80),
+        phone: phone.trim().slice(0, 30),
+        note: note.trim().slice(0, 500),
         carId: car.id,
         carLabel: title(car),
         price: car.price,
       });
       setSent(true);
     } catch (e) {
-      setErr(`That didn't send. Call or text ${DEALER.phone} instead.`);
+      setErr(`That didn't send. Call ${DEALER.phone} or text ${DEALER.cellPhone} instead.`);
     }
     setBusy(false);
   };
@@ -784,18 +825,37 @@ function LeadForm({ car }) {
   return (
     <div className="lead">
       <p className="micro gold">Or have us call you</p>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" aria-label="Your name" />
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Your name"
+        aria-label="Your name"
+        autoComplete="name"
+        maxLength={80}
+      />
       <input
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
         placeholder="Phone number"
-        inputMode="tel"
+        type="tel"
         aria-label="Your phone number"
+        autoComplete="tel"
+        maxLength={30}
+      />
+      <input
+        className="lead-trap"
+        value={website}
+        onChange={(e) => setWebsite(e.target.value)}
+        name="website"
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
       />
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
         rows={2}
+        maxLength={500}
         placeholder="Best time to reach you (optional)"
         aria-label="Note"
       />
@@ -1013,12 +1073,21 @@ function Admin({ go, say }) {
           <Leads
             leads={leads}
             onToggle={async (l) => {
-              await updateLead(l.id, { handled: !l.handled });
-              setLeads((ls) => ls.map((x) => (x.id === l.id ? { ...x, handled: !x.handled } : x)));
+              try {
+                await updateLead(l.id, { handled: !l.handled });
+                setLeads((ls) => ls.map((x) => (x.id === l.id ? { ...x, handled: !x.handled } : x)));
+              } catch (e) {
+                notify("That change didn't save. Try again.");
+              }
             }}
             onDelete={async (l) => {
-              await deleteLead(l.id);
-              setLeads((ls) => ls.filter((x) => x.id !== l.id));
+              if (!window.confirm(`Delete the request from ${l.name}?`)) return;
+              try {
+                await deleteLead(l.id);
+                setLeads((ls) => ls.filter((x) => x.id !== l.id));
+              } catch (e) {
+                notify("Couldn't delete that request.");
+              }
             }}
           />
         )}
@@ -1029,7 +1098,15 @@ function Admin({ go, say }) {
             onNew={() => setEditingSale({})}
             onEdit={(sale) => setEditingSale({ sale })}
             onDelete={async (sale) => {
-              if (!window.confirm("Delete this buyer's order? This does not un-sell the car.")) return;
+              if (
+                !window.confirm(
+                  sale.finalized
+                    ? "This sale is finalized. Virginia requires dealers to keep sales records for five years " +
+                        "(Va. Code § 46.2-1529) — only delete it if it was a test or a mistake. Delete anyway?"
+                    : "Delete this buyer's order? This does not un-sell the car."
+                )
+              )
+                return;
               try {
                 await deleteSale(sale.id);
                 setSales((ss) => ss.filter((x) => x.id !== sale.id));
@@ -1292,7 +1369,7 @@ function LineItems({ items, onChange, addLabel }) {
       {items.map((it, i) => (
         <div className="lineitem" key={i}>
           <input value={it.label} onChange={set(i, "label")} placeholder="Description" />
-          <input value={it.amount} onChange={set(i, "amount")} inputMode="numeric" placeholder="0.00" />
+          <input value={it.amount} onChange={set(i, "amount")} inputMode="decimal" placeholder="0.00" />
           <button type="button" onClick={() => remove(i)} aria-label="Remove line">
             ✕
           </button>
@@ -1828,16 +1905,10 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [docBusy, setDocBusy] = useState(false);
   const [docPreview, setDocPreview] = useState("");
   const [docsRefreshToken, setDocsRefreshToken] = useState(0);
-  const [printDoc, setPrintDoc] = useState(null); // null | 'buyersGuide' | 'notReady'
+  const [printDoc, setPrintDoc] = usePrintDoc(); // null | 'buyersGuide' | 'notReady'
   const [suggestingDesc, setSuggestingDesc] = useState(false);
   const [pendingDocs, setPendingDocs] = useState([]);
   const docFileRef = useRef(null);
-
-  useEffect(() => {
-    if (!printDoc) return;
-    const t = setTimeout(() => window.print(), 50);
-    return () => clearTimeout(t);
-  }, [printDoc]);
 
   const runDecode = async (vin) => {
     if (!isValidVinFormat(vin)) {
@@ -2433,7 +2504,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         <div className="fields">
           <label>
             <span>What you paid for this car</span>
-            <input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="numeric" placeholder="0.00" />
+            <input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" placeholder="0.00" />
           </label>
         </div>
         <p className="micro" style={{ marginTop: 14 }}>
@@ -2851,18 +2922,16 @@ function CarPicker({ cars, onPick }) {
 
 function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
   const existing = initial.sale || null;
-  const [s, setS] = useState(() => (existing ? { ...BLANK_SALE, ...existing } : { ...BLANK_SALE }));
+  const [s, setS] = useState(() =>
+    existing
+      ? { ...BLANK_SALE, ...existing }
+      : { ...BLANK_SALE, sale_date: todayLocal(), processing_fee: DEALER.processingFee || "" }
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [printDoc, setPrintDoc] = useState(null); // null | 'buyersOrder' | 'buyersGuide'
+  const [printDoc, setPrintDoc] = usePrintDoc(); // null | 'buyersOrder' | 'buyersGuide'
   const [pendingDocs, setPendingDocs] = useState([]);
   const startedFromCar = useRef(false);
-
-  useEffect(() => {
-    if (!printDoc) return;
-    const t = setTimeout(() => window.print(), 50);
-    return () => clearTimeout(t);
-  }, [printDoc]);
 
   const pickCar = useCallback((car) => {
     setS((prev) => ({
@@ -2894,13 +2963,15 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     }
   }, [existing, initial.car, pickCar]);
 
-  // keep the VA sales tax in sync with the subtotal as the dealer edits price/trade fields
+  // Keep the VA sales tax in sync with the taxable sale price. A finalized
+  // sale keeps the tax it was written with — reopening it to print must not
+  // change the figure the buyer signed.
+  const locked = !!(existing && existing.finalized);
   useEffect(() => {
-    const cashPrice = (Number(s.vehicle_price) || 0) + (Number(s.processing_fee) || 0);
-    const netTradeAllowance = (Number(s.gross_trade_allowance) || 0) - (Number(s.trade_payoff) || 0);
-    const tax = calcVaTax(cashPrice - netTradeAllowance);
+    if (locked) return;
+    const tax = calcVaTax(num(s.vehicle_price) + num(s.accessories) + num(s.processing_fee));
     setS((prev) => (Number(prev.sales_tax) === tax ? prev : { ...prev, sales_tax: tax }));
-  }, [s.vehicle_price, s.processing_fee, s.gross_trade_allowance, s.trade_payoff]);
+  }, [locked, s.vehicle_price, s.accessories, s.processing_fee]);
 
   const set = (path) => (e) =>
     setS((prev) => setPath(prev, path, e.target.type === "checkbox" ? e.target.checked : e.target.value));
@@ -2918,31 +2989,31 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     lien_holder: s.lien_holder,
     remarks: s.remarks,
     salesperson: s.salesperson,
-    vehicle_price: Number(s.vehicle_price) || 0,
-    accessories: Number(s.accessories) || 0,
-    service_contract_amount: Number(s.service_contract_amount) || 0,
-    processing_fee: Number(s.processing_fee) || 0,
-    gross_trade_allowance: Number(s.gross_trade_allowance) || 0,
-    trade_payoff: Number(s.trade_payoff) || 0,
-    sales_tax: Number(s.sales_tax) || 0,
-    license_fee: Number(s.license_fee) || 0,
-    title_fee: Number(s.title_fee) || 0,
-    registration_fee: Number(s.registration_fee) || 0,
-    highway_use_fee: Number(s.highway_use_fee) || 0,
-    dealer_biz_tax: Number(s.dealer_biz_tax) || 0,
-    online_filing_fee: Number(s.online_filing_fee) || 0,
+    vehicle_price: num(s.vehicle_price),
+    accessories: num(s.accessories),
+    service_contract_amount: num(s.service_contract_amount),
+    processing_fee: num(s.processing_fee),
+    gross_trade_allowance: num(s.gross_trade_allowance),
+    trade_payoff: num(s.trade_payoff),
+    sales_tax: num(s.sales_tax),
+    license_fee: num(s.license_fee),
+    title_fee: num(s.title_fee),
+    registration_fee: num(s.registration_fee),
+    highway_use_fee: num(s.highway_use_fee),
+    dealer_biz_tax: num(s.dealer_biz_tax),
+    online_filing_fee: num(s.online_filing_fee),
     other_charges: s.other_charges,
-    deposit: Number(s.deposit) || 0,
-    down_payment: Number(s.down_payment) || 0,
+    deposit: num(s.deposit),
+    down_payment: num(s.down_payment),
     payment_type: s.payment_type,
-    car_cost: Number(s.car_cost) || 0,
+    car_cost: num(s.car_cost),
     car_expenses: s.car_expenses,
-    uninsured_motor_vehicle_fee: Number(s.uninsured_motor_vehicle_fee) || 0,
+    uninsured_motor_vehicle_fee: num(s.uninsured_motor_vehicle_fee),
     warranty_type: s.warranty_type || "as_is",
     warranty_systems: s.warranty_systems || "",
     warranty_duration: s.warranty_duration || "",
-    warranty_pct_labor: Number(s.warranty_pct_labor) || 0,
-    warranty_pct_parts: Number(s.warranty_pct_parts) || 0,
+    warranty_pct_labor: num(s.warranty_pct_labor),
+    warranty_pct_parts: num(s.warranty_pct_parts),
     buyers_guide_signed: !!s.buyers_guide_signed,
   });
 
@@ -2958,7 +3029,7 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
       const saved = existing ? await updateSale(existing.id, payload) : await createSale(payload);
       if (finalize && saved.car_id) {
         try {
-          await updateCar(saved.car_id, { sold: true });
+          await updateCar(saved.car_id, { sold: true, stage: "sold" });
         } catch (e) {
           notify("Sale saved, but couldn't mark the car sold — do it from Inventory.");
         }
@@ -3228,7 +3299,7 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
               </label>
               <label>
                 <span>Balance owed</span>
-                <input value={s.trade_in.balanceOwed} onChange={set("trade_in.balanceOwed")} inputMode="numeric" />
+                <input value={s.trade_in.balanceOwed} onChange={set("trade_in.balanceOwed")} inputMode="decimal" />
               </label>
               <label>
                 <span>Lien account #</span>
@@ -3308,15 +3379,15 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
 
           <label>
             <span>Vehicle price</span>
-            <input value={s.vehicle_price} onChange={set("vehicle_price")} inputMode="numeric" />
+            <input value={s.vehicle_price} onChange={set("vehicle_price")} inputMode="decimal" />
           </label>
           <label>
             <span>Accessories</span>
-            <input value={s.accessories} onChange={set("accessories")} inputMode="numeric" />
+            <input value={s.accessories} onChange={set("accessories")} inputMode="decimal" />
           </label>
           <label>
             <span>Processing fee</span>
-            <input value={s.processing_fee} onChange={set("processing_fee")} inputMode="numeric" />
+            <input value={s.processing_fee} onChange={set("processing_fee")} inputMode="decimal" />
           </label>
           <div className="settle-row strong">
             <span>Cash price</span>
@@ -3325,11 +3396,11 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
 
           <label>
             <span>Gross trade-in allowance</span>
-            <input value={s.gross_trade_allowance} onChange={set("gross_trade_allowance")} inputMode="numeric" />
+            <input value={s.gross_trade_allowance} onChange={set("gross_trade_allowance")} inputMode="decimal" />
           </label>
           <label>
             <span>Less payoff</span>
-            <input value={s.trade_payoff} onChange={set("trade_payoff")} inputMode="numeric" />
+            <input value={s.trade_payoff} onChange={set("trade_payoff")} inputMode="decimal" />
           </label>
           <div className="settle-row strong">
             <span>Net trade-in allowance</span>
@@ -3346,17 +3417,21 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
             <span>4.15% VA sales &amp; use tax</span>
             <strong>{moneyCents(s.sales_tax)}</strong>
           </div>
+          <p className="scan-hint" style={{ marginTop: -4 }}>
+            Figured on the full cash price above ($75 minimum). Virginia gives no tax credit for a
+            trade-in, so the trade doesn't lower this.
+          </p>
           <label>
             <span>License fee</span>
-            <input value={s.license_fee} onChange={set("license_fee")} inputMode="numeric" />
+            <input value={s.license_fee} onChange={set("license_fee")} inputMode="decimal" />
           </label>
           <label>
             <span>Title fee</span>
-            <input value={s.title_fee} onChange={set("title_fee")} inputMode="numeric" />
+            <input value={s.title_fee} onChange={set("title_fee")} inputMode="decimal" />
           </label>
           <label>
             <span>Registration fee</span>
-            <input value={s.registration_fee} onChange={set("registration_fee")} inputMode="numeric" />
+            <input value={s.registration_fee} onChange={set("registration_fee")} inputMode="decimal" />
           </label>
           <p className="scan-hint" style={{ gridColumn: "1 / -1", marginTop: -8 }}>
             $30.75 default is for a passenger vehicle 4,000 lbs or less (current VA DMV fee chart).
@@ -3365,28 +3440,30 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
           </p>
           <label>
             <span>Highway use fee</span>
-            <input value={s.highway_use_fee} onChange={set("highway_use_fee")} inputMode="numeric" />
+            <input value={s.highway_use_fee} onChange={set("highway_use_fee")} inputMode="decimal" />
           </label>
           <p className="scan-hint" style={{ gridColumn: "1 / -1", marginTop: -8 }}>
-            Only applies to vehicles rated 25+ combined MPG or EVs — not a flat fee. Roughly $7–$132
-            depending on fuel economy for FY26, EVs a flat $135.63. Leave at 0 unless this vehicle
-            qualifies; check dmv.virginia.gov/vehicles/taxes-fees/highway-use for the exact figure.
+            Only applies to vehicles rated 25+ combined MPG and EVs, and the amount depends on the
+            vehicle's fuel economy. DMV resets the chart every July 1. Leave at 0 unless this vehicle
+            qualifies; look up the exact figure at dmv.virginia.gov/vehicles/taxes-fees/highway-use.
           </p>
           <label>
             <span>Dealer's business license tax</span>
-            <input value={s.dealer_biz_tax} onChange={set("dealer_biz_tax")} inputMode="numeric" />
+            <input value={s.dealer_biz_tax} onChange={set("dealer_biz_tax")} inputMode="decimal" />
           </label>
           <label>
             <span>On-line systems filing fee</span>
-            <input value={s.online_filing_fee} onChange={set("online_filing_fee")} inputMode="numeric" />
+            <input value={s.online_filing_fee} onChange={set("online_filing_fee")} inputMode="decimal" />
           </label>
           <label>
             <span>Service contract amount</span>
-            <input value={s.service_contract_amount} onChange={set("service_contract_amount")} inputMode="numeric" />
+            <input value={s.service_contract_amount} onChange={set("service_contract_amount")} inputMode="decimal" />
           </label>
           {Number(s.service_contract_amount) > 0 && (
-            <p className="micro" style={{ marginTop: -6 }}>
-              Tax on service contract (half retail, 4.15%): {moneyCents(totals.serviceContractTax)}
+            <p className="scan-hint" style={{ marginTop: -6 }}>
+              Sales tax on service contract: {moneyCents(totals.serviceContractTax)} (
+              {SERVICE_CONTRACT_TAX_RATE * 100}% retail sales tax on half the price). A contract issued
+              by a licensed insurance company isn't taxed — enter that one under Other charges instead.
             </p>
           )}
           <p className="micro" style={{ marginTop: 10 }}>
@@ -3403,11 +3480,11 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
           <p className="micro">Credit</p>
           <label>
             <span>Deposit</span>
-            <input value={s.deposit} onChange={set("deposit")} inputMode="numeric" />
+            <input value={s.deposit} onChange={set("deposit")} inputMode="decimal" />
           </label>
           <label>
             <span>Total down payment</span>
-            <input value={s.down_payment} onChange={set("down_payment")} inputMode="numeric" />
+            <input value={s.down_payment} onChange={set("down_payment")} inputMode="decimal" />
           </label>
           <div className="settle-row strong">
             <span>Total credit</span>
@@ -3528,29 +3605,13 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
       )}
       {printDoc === "buyersGuide" && (
         <PrintPortal>
-          <BuyerGuideDocument vehicle={s.vehicle} warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }} />
+          <BuyerGuideDocument
+            vehicle={s.vehicle}
+            warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }}
+            serviceContract={num(s.service_contract_amount) > 0}
+          />
         </PrintPortal>
       )}
-    </div>
-  );
-}
-
-function Row({ label, value, strong, big }) {
-  return (
-    <div className={"doc-row" + (strong ? " strong" : "") + (big ? " big" : "")}>
-      <span>{label}</span>
-      <span>{moneyCents(value)}</span>
-    </div>
-  );
-}
-
-// MVDB-44: a fee that was never charged must show literally "NONE", not a
-// blank or $0.00.
-function FeeRow({ label, value, strong }) {
-  return (
-    <div className={"doc-row" + (strong ? " strong" : "")}>
-      <span>{label}</span>
-      <span>{Number(value) ? moneyCents(value) : "NONE"}</span>
     </div>
   );
 }
@@ -3568,30 +3629,40 @@ function VF({ label, value, full, children }) {
   return (
     <div className={"vf" + (full ? " vf-full" : "")}>
       <span className="vf-label">{label}</span>
-      <span className="vf-val">{children || value || " "}</span>
+      <span className="vf-val">{children || value || " "}</span>
     </div>
   );
 }
 
-// One numbered settlement line (right column, items (1)-(21) on the
-// reference form).
-function VN({ n, label, value, strong }) {
+// One numbered settlement line. `none` is for the two lines the Dealer
+// Board's checklist (MVDB-44) wants marked "NONE" when nothing is charged:
+// the processing fee and the dealer's business license tax.
+function VN({ n, label, value, strong, none }) {
+  const shown =
+    none && !Number(value) ? "NONE" : value === "" || value == null ? "" : moneyCents(value);
   return (
     <div className={"vn" + (strong ? " vn-strong" : "")}>
       <span className="vn-label">{label}</span>
       <span className="vn-num">({n})</span>
-      <span className="vn-val">{value === "" || value == null ? "" : moneyCents(value)}</span>
+      <span className="vn-val">{shown}</span>
     </div>
   );
 }
 
-function SaleDocument({ s, totals }) {
+// Buyer's order contents follow Va. Code § 46.2-1530(A) and the Dealer
+// Board's MVDB-44 checklist. Text marked "statutory" below is required
+// wording — don't reword it, and don't shrink the vo-legal type sizes, which
+// are the statute's minimums.
+export function SaleDocument({ s, totals }) {
   const v = s.vehicle || {};
   const b = s.buyer || {};
   const t = s.trade_in || {};
   const ins = s.insurance || {};
   const lien = s.lien_holder || {};
   const hasTrade = t.year || t.make || t.vin;
+  const warranty = WARRANTY_DOC_LABEL[s.warranty_type] ? s.warranty_type : "as_is";
+  const financed = s.payment_type === "finance";
+  const others = (s.other_charges || []).filter((c) => c.label || Number(c.amount));
 
   return (
     <div className="print-area vo-doc">
@@ -3633,7 +3704,7 @@ function SaleDocument({ s, totals }) {
             <VF label="Year" value={v.year} />
             <VF label="Make" value={v.make} />
             <VF label="Model" value={v.model} />
-            <VF label="Type/Doors" value={v.body} />
+            <VF label="Body Style" value={v.body} />
           </div>
           <div className="vf-row">
             <VF label="Color" value={v.color1} />
@@ -3642,103 +3713,95 @@ function SaleDocument({ s, totals }) {
           <div className="vf-row">
             <VF label="Modifications" value={v.modifications} full />
           </div>
-          <div className="vf-row">
-            <VF label="Lien Holder" value={lien.company} full />
-          </div>
-          <div className="vf-row">
-            <VF label="Address" value={lien.street} full />
-          </div>
-          <div className="vf-row">
-            <VF label="City/State/Zip" value={lien.cityStateZip} full />
-          </div>
 
           <div className="vf-row vo-asis">
             <div className="vf vf-full">
-              <span className="vf-label">{WARRANTY_DOC_LABEL[s.warranty_type] || WARRANTY_DOC_LABEL.as_is}</span>
-              {s.warranty_type === "as_is" ? (
+              <span className="vf-label">{WARRANTY_DOC_LABEL[warranty]}</span>
+              {warranty === "as_is" ? (
                 <>
-                  <p>
-                    I understand that this vehicle is being sold "as is" with all faults and is not covered
+                  {/* Statutory — Va. Code § 46.2-1529.1(B): exact words, on
+                      the front, bold, at least 10-point, signed by the buyer. */}
+                  <p className="vo-legal">
+                    I understand that this vehicle is being sold "AS IS" with all faults and is not covered
                     by any dealer warranty. I understand that the dealer is not required to make any repairs
                     after I buy this vehicle. I will have to pay for any repairs this vehicle will need.
                   </p>
-                  <p className="doc-sign-line">Date: _______________ Signature: X ___________________________</p>
+                  <p className="vo-sign">Buyer's Signature: X ______________________ Date: __________</p>
                 </>
-              ) : s.warranty_type === "implied_only" ? (
-                <p>
+              ) : warranty === "implied_only" ? (
+                <p className="vo-legal">
                   The dealer doesn't make any promises to fix things that need repair when you buy the
-                  vehicle or afterward. Implied warranties under Virginia law may give you some rights.
+                  vehicle or afterward. But implied warranties under your state's laws may give you some
+                  rights to have the dealer take care of serious problems that were not apparent when you
+                  bought the vehicle.
                 </p>
               ) : (
-                <p>
-                  {s.warranty_type === "dealer_limited" &&
-                    `Dealer pays ${s.warranty_pct_labor || 0}% labor / ${s.warranty_pct_parts || 0}% parts. `}
-                  Systems covered: {s.warranty_systems || "—"}. Duration: {s.warranty_duration || "—"}.
+                <p className="vo-legal">
+                  {warranty === "dealer_full"
+                    ? "FULL WARRANTY. "
+                    : `LIMITED WARRANTY. The dealer will pay ${num(s.warranty_pct_labor)}% of the labor and ${num(
+                        s.warranty_pct_parts
+                      )}% of the parts for the covered systems that fail during the warranty period. `}
+                  Systems covered: {s.warranty_systems || "________________"}. Duration:{" "}
+                  {s.warranty_duration || "________________"}. See the Buyers Guide for this vehicle.
                 </p>
               )}
-              <p className="vf-label" style={{ marginTop: 4 }}>
-                Buyer's Guide:{" "}
-                {s.buyers_guide_signed ? "attached, signed and dated by buyer" : "☐ attach signed, dated copy before delivery"}
+              {/* Statutory — 16 C.F.R. § 455.3(b): exact words, conspicuous. */}
+              <p className="vo-legal">
+                The information you see on the window form for this vehicle is part of this contract.
+                Information on the window form overrides any contrary provisions in the contract of sale.
+              </p>
+              {/* § 46.2-1529.1(C) requires notice of the buyer's remedy to be
+                  part of the warranty/"AS IS" disclosure itself. */}
+              <p className="vo-notice">
+                A fully completed Buyers Guide, signed and dated by the buyer, is incorporated as part of
+                this buyer's order. NOTICE (Va. Code § 46.2-1529.1): if the dealer fails to provide the
+                disclosure above as the law requires, the dealer is subject to a civil penalty of no more
+                than $1,000 and the buyer may cancel the sale within 30 days. In that case the buyer has
+                the right to return the vehicle to the dealer and obtain a full refund of all payments
+                made toward the purchase, less any damage to the vehicle incurred while the buyer owned
+                it, and less a reasonable amount for its use not to exceed one-half the IRS mileage rate
+                for business use of a personal vehicle.
+              </p>
+              <p className="vo-notice">
+                Buyers Guide:{" "}
+                {s.buyers_guide_signed ? "☒ attached, signed and dated by buyer" : "☐ attach signed, dated copy before delivery"}
               </p>
             </div>
           </div>
 
-          <div className="vf-row">
-            <VF label="Existing Lien Holder" value={t.balanceOwedTo} />
-            <VF label="Account No." value={t.accountNo} />
-          </div>
-          <div className="vf-row">
-            <VF label="Quoted By" value={t.quotedBy} />
-            <VF label="Good Until" value={t.goodThrough} />
-            <VF label="Additional Liens" value={t.additionalLiens} />
-          </div>
-
           {hasTrade && (
             <>
-              <div className="vf-row vo-trade">
-                <span className="vo-trade-tag">TRADE</span>
-                <VF label="Year" value={t.year} />
-                <VF label="Make" value={t.make} />
-                <VF label="Model" value={t.model} />
-                <VF label="Type/Doors" value={t.body} />
+              <div className="vf-row">
+                <VF label="Trade-In Year" value={t.year} />
+                <VF label="Trade-In Make" value={t.make} />
+                <VF label="Trade-In Model" value={t.model} />
+                <VF label="Trade-In Body Style" value={t.body} />
               </div>
-              <div className="vf-row vo-trade">
-                <span className="vo-trade-tag" />
+              <div className="vf-row">
+                <VF label="Trade-In VIN" value={t.vin} full />
                 <VF label="Color" value={t.color} />
+              </div>
+              <div className="vf-row">
                 <VF label="Mileage" value={t.mileage && miles(t.mileage)} />
                 <VF label="Fuel Type" value={t.fuelType} />
                 <VF label="Title No." value={t.titleNo} />
               </div>
-              <div className="vf-row vo-trade">
-                <span className="vo-trade-tag" />
-                <VF label="VIN" value={t.vin} full />
+              <div className="vf-row">
+                <VF label="Existing Lien Holder" value={t.balanceOwedTo} />
+                <VF label="Account No." value={t.accountNo} />
+              </div>
+              <div className="vf-row">
+                <VF label="Quoted By" value={t.quotedBy} />
+                <VF label="Good Until" value={t.goodThrough} />
+                <VF label="Additional Liens" value={t.additionalLiens} />
               </div>
             </>
           )}
 
-          <div className="vf-row">
-            <VF label="Transfer Tag No." value={v.transferTagNo} />
-            <VF label="Temporary Tag No." value={v.tempTagNo} />
-          </div>
-          <div className="vf-row">
-            <VF label="Insurance Company" value={ins.company} />
-            <VF label="Agent" value={ins.agent} />
-          </div>
-          <div className="vf-row">
-            <VF label="Policy No." value={ins.policy} />
-            <VF label="Contact" value={ins.contact} />
-          </div>
-          <div className="vf-row">
-            <VF label="Exp. Date" value={ins.expDate} />
-            <VF label="Phone No." value={ins.phone} />
-          </div>
-
+          {/* Statutory — § 46.2-1530(A): boldface, no smaller than 18-point,
+              on the face of the order. */}
           <div className="vo-noliab">NO LIABILITY INSURANCE INCLUDED</div>
-          <p className="vo-noliab-sub">
-            THE FRONT AND BACK OF THIS ORDER, ALONG WITH OTHER DOCUMENTS SIGNED BY THE PURCHASER(S) IN
-            CONNECTION WITH THIS ORDER, INCLUDING ANY RETAIL INSTALLMENT SALES CONTRACT, COMPRISE THE ENTIRE
-            AGREEMENT AFFECTING THIS PURCHASE. NO ORAL AGREEMENTS OR UNDERSTANDINGS WILL BE BINDING.
-          </p>
         </div>
 
         <div className="vo-col">
@@ -3757,42 +3820,72 @@ function SaleDocument({ s, totals }) {
           <div className="vf-row">
             <VF label="Home Phone" value={b.homePhone} />
             <VF label="Work Phone" value={b.workPhone} />
-          </div>
-          <div className="vf-row">
-            <VF label="Mileage" value={v.mileage && miles(v.mileage)} />
             <VF label="Mobile Phone" value={b.cellPhone} />
           </div>
           <div className="vf-row">
+            <VF label="Mileage" value={v.mileage && miles(v.mileage)} />
             <VF label="Delivery Date" value={v.deliveryDate} />
             <VF label="State Inspection No." value={v.stateInspectionNo} />
           </div>
 
-          <VN n={1} label="Base Price" value={s.vehicle_price} />
+          {/* § 46.2-1530(A)(8): every tax and fee listed and identified on
+              its own line — don't merge these. */}
+          <VN n={1} label="Sale Price of Vehicle" value={s.vehicle_price} />
           <VN n={2} label="Accessories" value={s.accessories} />
-          <VN n={4} label="Processing Fee" value={s.processing_fee} />
-          <VN n={5} label="Subtotal (Taxable) (1+2+3+4)" value={totals.cashPrice} strong />
-          <VN n={6} label="Trade Allowance" value={s.gross_trade_allowance} />
-          <VN n={7} label="Approx. Balance" value={s.trade_payoff} />
-          <VN n={8} label="Trade Equity (6-7)" value={totals.netTradeAllowance} strong />
-          <VN n={9} label="Trade Difference (5-8)" value={totals.subtotal} strong />
-          <VN n={10} label="VA Sales & Use Tax" value={s.sales_tax} />
-          <VN n={11} label="DMV: License/Title/Reg./Highway Use" value={Number(s.license_fee) + Number(s.title_fee) + Number(s.registration_fee) + Number(s.highway_use_fee)} />
-          <VN n={13} label="Dealer's Business License Tax" value={s.dealer_biz_tax} />
-          <VN n={14} label="Service Contract + Tax" value={Number(s.service_contract_amount) + Number(totals.serviceContractTax)} />
-          <VN n={15} label="On-Line Systems Filing Fee" value={s.online_filing_fee} />
-          {(s.other_charges || []).map((c, i) => (
-            <VN key={i} n="16" label={c.label || "Other charge"} value={c.amount} />
-          ))}
-          <VN n={17} label="Subtotal (9+10+11+13+14+15+16)" value={totals.totalDue} strong />
-          <VN n={18} label="Deposit with Order" value={s.deposit} />
-          <VN n={19} label="Payment Due on Delivery" value={s.down_payment} />
-          <VN n={20} label="Total Down Payment (18+19)" value={totals.totalCredit} strong />
-          <VN n={21} label="BALANCE TO BE FINANCED (17-20)" value={totals.balanceDue} strong />
-          <p className="vf-label" style={{ marginTop: 6, textAlign: "right" }}>
-            Payment: {s.payment_type === "finance" ? "Finance — see reverse side (#9)" : "Cash"}
+          <VN n={3} label="Processing Fee" value={s.processing_fee} none />
+          <VN n={4} label="Taxable Sale Price (1+2+3)" value={totals.cashPrice} strong />
+          <VN n={5} label="VA Motor Vehicle Sales & Use Tax (4.15%)" value={s.sales_tax} />
+          <VN n={6} label="Title Fee" value={s.title_fee} />
+          <VN n={7} label="Registration Fee" value={s.registration_fee} />
+          <VN n={8} label="License Fee" value={s.license_fee} />
+          <VN n={9} label="Highway Use Fee" value={s.highway_use_fee} />
+          <VN n={10} label="On-Line Systems Filing Fee" value={s.online_filing_fee} />
+          <VN n={11} label="Dealer's Business License Tax" value={s.dealer_biz_tax} none />
+          <VN n={12} label="Service Contract" value={s.service_contract_amount} />
+          <VN n={13} label="Sales Tax on Service Contract" value={totals.serviceContractTax} />
+          {Number(s.uninsured_motor_vehicle_fee) > 0 && (
+            <VN n={14} label="Uninsured Motor Vehicle Fee" value={s.uninsured_motor_vehicle_fee} />
+          )}
+          {others.length ? (
+            others.map((c, i) => <VN key={i} n={14} label={c.label || "Other charge"} value={c.amount} />)
+          ) : (
+            <VN n={14} label="Other Charges" value="" />
+          )}
+          <VN n={15} label="TOTAL PRICE (4 through 14)" value={totals.totalPrice} strong />
+          <VN n={16} label="Trade-In Allowance" value={s.gross_trade_allowance} />
+          <VN n={17} label="Less Payoff on Trade-In (approx.)" value={s.trade_payoff} />
+          <VN n={18} label="Net Trade-In Credit (16−17)" value={totals.netTradeAllowance} />
+          <VN n={19} label="Cash Deposit with Order" value={s.deposit} />
+          <VN n={20} label="Cash Due on Delivery" value={s.down_payment} />
+          <VN n={21} label="Total Credits (18+19+20)" value={totals.netTradeAllowance + totals.totalCredit} strong />
+          <VN
+            n={22}
+            label={"NET BALANCE DUE AT SETTLEMENT (15−21)" + (financed ? " — TO BE FINANCED" : "")}
+            value={totals.balanceDue}
+            strong
+          />
+          <p className="vo-notice vo-pay">
+            Payment: {financed ? "Finance — read the financing notice on page 2" : "Cash"}
           </p>
 
-          <div className="vf-row" style={{ marginTop: 16 }}>
+          <div className="vf-row">
+            <VF label="Lien Holder" value={lien.company} />
+            <VF label="Address" value={[lien.street, lien.cityStateZip].filter(Boolean).join(", ")} />
+          </div>
+          <div className="vf-row">
+            <VF label="Transfer Tag No." value={v.transferTagNo} />
+            <VF label="Temporary Tag No." value={v.tempTagNo} />
+          </div>
+          <div className="vf-row">
+            <VF label="Insurance Company" value={ins.company} />
+            <VF label="Policy No." value={ins.policy} />
+          </div>
+          <div className="vf-row">
+            <VF label="Agent / Contact" value={[ins.agent, ins.contact].filter(Boolean).join(" / ")} />
+            <VF label="Phone No." value={ins.phone} />
+            <VF label="Exp. Date" value={ins.expDate} />
+          </div>
+          <div className="vf-row">
             <VF label="Salesperson" value={s.salesperson} full />
           </div>
           {s.remarks && (
@@ -3804,18 +3897,20 @@ function SaleDocument({ s, totals }) {
       </div>
 
       <p className="doc-legal">
-        If there are any inconsistencies between this Order and any other document signed by the
-        Purchaser(s), the terms of this Order prevail. Purchaser(s) acknowledges that they have been given
-        the opportunity to review all documents prior to signing and have not signed any documents in blank.
-        By executing this order, Purchaser(s) acknowledges that they have read and agree to be bound by all
-        of its terms and has received a fully completed copy. Purchaser(s) certifies that they are 18 years
-        of age or older.
+        This Order, the Buyers Guide, and the other documents signed by the Purchaser(s) in connection with
+        it, including any retail installment sales contract, are the entire agreement for this purchase; no
+        oral agreement or understanding is binding. If this Order conflicts with another document signed
+        by the Purchaser(s), this Order controls. Purchaser(s) had the opportunity to review every document
+        before signing, signed none in blank, have read and agree to the terms on both pages of this Order,
+        received a completed copy, and are 18 years of age or older.
       </p>
 
       <div className="doc-signatures">
         <div>
           <span className="doc-sign-line">X ___________________________ ___________</span>
-          <span className="micro">PURCHASER · DRIVERS LIC # ____________ · DATE</span>
+          <span className="micro">
+            PURCHASER · DRIVERS LIC # {b.dlNumber ? `${b.dlNumber}${b.dlState ? " " + b.dlState : ""}` : "____________"} · DATE
+          </span>
         </div>
         <div>
           <span className="doc-sign-line">X ___________________________ ___________</span>
@@ -3833,9 +3928,8 @@ function SaleDocument({ s, totals }) {
 
       {/* Independently written to cover the same substantive ground a
           standard VA buyer's order addresses (trade condition, default/
-          cancellation remedies, warranty disclaimer, title handling,
-          Buyer's Guide incorporation) — not copied from any particular
-          dealer association's copyrighted form. */}
+          cancellation remedies, warranty disclaimer, title handling) — not
+          copied from any dealer association's copyrighted form. */}
       <div className="doc-terms">
         <p className="doc-terms-title">ADDITIONAL TERMS AND CONDITIONS</p>
         <ol>
@@ -3866,13 +3960,25 @@ function SaleDocument({ s, totals }) {
             The Dealer is not responsible for any delay in delivering the vehicle described in this
             Order where the delay is caused by circumstances beyond the Dealer's reasonable control.
           </li>
+          {/* The disclaimer only goes on an "AS IS" sale: disclaiming implied
+              warranties on a sale that carries them would contradict the
+              Buyers Guide, which 16 C.F.R. § 455.4 prohibits. */}
+          {warranty === "as_is" ? (
+            <li>
+              This vehicle is sold "AS IS", WITHOUT ANY WARRANTY, EXPRESS OR IMPLIED, INCLUDING ANY
+              IMPLIED WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, as disclosed on
+              the front of this Order and on the Buyers Guide.
+            </li>
+          ) : (
+            <li>
+              The only warranties the Dealer gives on this vehicle are those stated on the front of
+              this Order and on the Buyers Guide for this vehicle.
+            </li>
+          )}
           <li>
-            Except as separately stated in writing by the Dealer (including on the Buyers Guide for
-            this vehicle), this vehicle is sold WITHOUT ANY WARRANTY, EXPRESS OR IMPLIED, INCLUDING
-            ANY IMPLIED WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. Purchaser
-            is not entitled to recover consequential damages, loss of use, loss of income, or other
-            incidental damages from the Dealer in connection with this sale. This Order is governed
-            by the laws of the Commonwealth of Virginia.
+            To the extent the law allows, Purchaser is not entitled to recover consequential damages,
+            loss of use, loss of income, or other incidental damages from the Dealer in connection
+            with this sale. This Order is governed by the laws of the Commonwealth of Virginia.
           </li>
           <li>
             For a cash transaction, title to the vehicle described in this Order does not pass to
@@ -3883,40 +3989,35 @@ function SaleDocument({ s, totals }) {
             when this Order was written and is subject to correction once the actual amount is
             known.
           </li>
-          {s.payment_type === "finance" && (
-            // Exact required wording per MVDB-44, not paraphrased — this
-            // one (unlike the rest of this page) is government-mandated
-            // text, same source as the AS-IS clause.
-            <li className="doc-terms-exact">
-              IF YOU ARE FINANCING THIS VEHICLE PLEASE READ THIS NOTICE. YOU ARE PROPOSING TO ENTER INTO
-              A RETAIL INSTALLMENT SALES CONTRACT WITH THE DEALER. PART OF YOUR CONTRACT INVOLVES
-              FINANCING THE PURCHASE OF YOUR VEHICLE. IF YOU ARE FINANCING THIS VEHICLE AND THE DEALER
-              INTENDS TO TRANSFER YOUR FINANCING TO A FINANCE PROVIDER SUCH AS A BANK, CREDIT UNION OR
-              OTHER LENDER, YOUR VEHICLE PURCHASE DEPENDS ON THE FINANCE PROVIDER'S APPROVAL OF YOUR
-              PROPOSED RETAIL INSTALLMENT SALES CONTRACT. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS
-              APPROVED WITHOUT A CHANGE THAT INCREASES THE COST OR RISK TO YOU OR THE DEALER, YOUR
-              PURCHASE CANNOT BE CANCELLED. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS NOT APPROVED THE
-              DEALER WILL NOTIFY YOU VERBALLY OR IN WRITING. YOU CAN THEN DECIDE TO PAY FOR THE VEHICLE IN
-              SOME OTHER WAY OR YOU OR THE DEALER CAN CANCEL YOUR PURCHASE. IF THE SALE IS CANCELLED, YOU
-              NEED TO RETURN THE VEHICLE TO THE DEALER WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE IN THE
-              SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR. ANY DOWN PAYMENT OR
-              TRADE-IN YOU GAVE THE DEALER WILL BE RETURNED TO YOU. IF YOU DO NOT RETURN THE VEHICLE
-              WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE OF CANCELLATION, THE DEALER MAY LOCATE THE
-              VEHICLE AND TAKE IT BACK WITHOUT FURTHER NOTICE TO YOU AS LONG AS THE DEALER FOLLOWS THE LAW
-              AND DOES NOT CAUSE A BREACH OF THE PEACE WHEN TAKING THE VEHICLE BACK. IF THE DEALER DOES
-              NOT RETURN YOUR DOWN PAYMENT AND ANY TRADE-IN WHEN THE DEALER GETS THE VEHICLE BACK IN THE
-              SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR, THE DEALER MAY BE
-              LIABLE TO YOU UNDER THE VIRGINIA CONSUMER PROTECTION ACT.
-            </li>
-          )}
           <li>
-            The information on the Buyers Guide posted on this vehicle is part of this contract, and
-            overrides any conflicting term in this Order. Under Virginia law, failing to provide the
-            Buyers Guide, or failing to disclose an "AS IS" sale as required on this Order, may
-            subject the Dealer to a civil penalty of up to $1,000 and may allow Purchaser to cancel
-            this sale within 30 days.
+            The Buyers Guide for this vehicle, signed and dated by Purchaser, is incorporated into and
+            made part of this Order.
           </li>
         </ol>
+        {financed && (
+          // Statutory — Va. Code § 46.2-1530(A)(12): exact words and
+          // punctuation, bold, at least 10-point.
+          <p className="vo-legal vo-finance">
+            IF YOU ARE FINANCING THIS VEHICLE, PLEASE READ THIS NOTICE: YOU ARE PROPOSING TO ENTER INTO A
+            RETAIL INSTALLMENT SALES CONTRACT WITH THE DEALER. PART OF YOUR CONTRACT INVOLVES FINANCING THE
+            PURCHASE OF YOUR VEHICLE. IF YOU ARE FINANCING THIS VEHICLE AND THE DEALER INTENDS TO TRANSFER
+            YOUR FINANCING TO A FINANCE PROVIDER SUCH AS A BANK, CREDIT UNION OR OTHER LENDER, YOUR VEHICLE
+            PURCHASE DEPENDS ON THE FINANCE PROVIDER'S APPROVAL OF YOUR PROPOSED RETAIL INSTALLMENT SALES
+            CONTRACT. IF YOUR RETAIL INSTALLMENT SALES CONTRACT IS APPROVED WITHOUT A CHANGE THAT INCREASES
+            THE COST OR RISK TO YOU OR THE DEALER, YOUR PURCHASE CANNOT BE CANCELLED. IF YOUR RETAIL
+            INSTALLMENT SALES CONTRACT IS NOT APPROVED, THE DEALER WILL NOTIFY YOU VERBALLY OR IN WRITING.
+            YOU CAN THEN DECIDE TO PAY FOR THE VEHICLE IN SOME OTHER WAY OR YOU OR THE DEALER CAN CANCEL
+            YOUR PURCHASE. IF THE SALE IS CANCELLED, YOU NEED TO RETURN THE VEHICLE TO THE DEALER WITHIN 24
+            HOURS OF VERBAL OR WRITTEN NOTICE IN THE SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL
+            WEAR AND TEAR. ANY DOWN PAYMENT OR TRADE-IN YOU GAVE THE DEALER WILL BE RETURNED TO YOU. IF YOU
+            DO NOT RETURN THE VEHICLE WITHIN 24 HOURS OF VERBAL OR WRITTEN NOTICE OF CANCELLATION, THE
+            DEALER MAY LOCATE THE VEHICLE AND TAKE IT BACK WITHOUT FURTHER NOTICE TO YOU AS LONG AS THE
+            DEALER FOLLOWS THE LAW AND DOES NOT CAUSE A BREACH OF THE PEACE WHEN TAKING THE VEHICLE BACK. IF
+            THE DEALER DOES NOT RETURN YOUR DOWN PAYMENT AND ANY TRADE-IN WHEN THE DEALER GETS THE VEHICLE
+            BACK IN THE SAME CONDITION IT WAS GIVEN TO YOU, EXCEPT FOR NORMAL WEAR AND TEAR, THE DEALER MAY
+            BE LIABLE TO YOU UNDER THE VIRGINIA CONSUMER PROTECTION ACT.
+          </p>
+        )}
       </div>
 
       <p className="doc-foot">
@@ -3926,180 +4027,297 @@ function SaleDocument({ s, totals }) {
   );
 }
 
-// FTC Used Car Rule Buyers Guide (16 C.F.R. 455) — content reproduced
-// verbatim from the FTC's own fillable PDF (ftc.gov/business-guidance/
-// resources/buyers-guide-fillable-form), auto-filled with this vehicle's
-// warranty terms instead of left for the dealer to hand-write.
-function BuyerGuideDocument({ vehicle, warranty }) {
+// Back of the Buyers Guide — the FTC's list, word for word (Figure 3 to
+// 16 C.F.R. Part 455).
+const BG_DEFECTS = [
+  [
+    ["Frame & Body", ["Frame-cracks, corrective welds, or rusted through", "Dog tracks—bent or twisted frame"]],
+    [
+      "Engine",
+      [
+        "Oil leakage, excluding normal seepage",
+        "Cracked block or head",
+        "Belts missing or inoperable",
+        "Knocks or misses related to camshaft lifters and push rods",
+        "Abnormal exhaust discharge",
+      ],
+    ],
+    [
+      "Transmission & Drive Shaft",
+      [
+        "Improper fluid level or leakage, excluding normal seepage",
+        "Cracked or damaged case which is visible",
+        "Abnormal noise or vibration caused by faulty transmission or drive shaft",
+        "Improper shifting or functioning in any gear",
+        "Manual clutch slips or chatters",
+      ],
+    ],
+    [
+      "Differential",
+      [
+        "Improper fluid level or leakage, excluding normal seepage",
+        "Cracked or damaged housing which is visible",
+        "Abnormal noise or vibration caused by faulty differential",
+      ],
+    ],
+  ],
+  [
+    ["Cooling System", ["Leakage including radiator", "Improperly functioning water pump"]],
+    ["Electrical System", ["Battery leakage", "Improperly functioning alternator, generator, battery, or starter"]],
+    ["Fuel System", ["Visible leakage"]],
+    ["Inoperable Accessories", ["Gauges or warning devices", "Air conditioner", "Heater & Defroster"]],
+    [
+      "Brake System",
+      [
+        "Failure warning light broken",
+        "Pedal not firm under pressure (DOT spec.)",
+        "Not enough pedal reserve (DOT spec.)",
+        "Does not stop vehicle in straight line (DOT spec.)",
+        "Hoses damaged",
+        "Drum or rotor too thin (Mfgr. Specs)",
+        "Lining or pad thickness less than 1/32 inch",
+        "Power unit not operating or leaking",
+        "Structural or mechanical parts damaged",
+      ],
+    ],
+    ["Air Bags", []],
+  ],
+  [
+    [
+      "Steering System",
+      [
+        "Too much free play at steering wheel (DOT specs.)",
+        "Free play in linkage more than 1/4 inch",
+        "Steering gear binds or jams",
+        "Front wheels aligned improperly (DOT specs.)",
+        "Power unit belts cracked or slipping",
+        "Power unit fluid level improper",
+      ],
+    ],
+    [
+      "Suspension System",
+      [
+        "Ball joint seals damaged",
+        "Structural parts bent or damaged",
+        "Stabilizer bar disconnected",
+        "Spring broken",
+        "Shock absorber mounting loose",
+        "Rubber bushings damaged or missing",
+        "Radius rod damaged or missing",
+        "Shock absorber leaking or functioning improperly",
+      ],
+    ],
+    ["Tires", ["Tread depth less than 2/32 inch", "Sizes mismatched", "Visible damage"]],
+    ["Wheels", ["Visible cracks, damage or repairs", "Mounting bolts loose or missing"]],
+    ["Exhaust System", ["Leakage", "Catalytic Converter"]],
+  ],
+];
+
+function BgBox({ on, big }) {
+  return <span className={"bg-box" + (big ? " bg-box-big" : "")}>{on ? "X" : ""}</span>;
+}
+
+// FTC Used Car Rule Buyers Guide (16 C.F.R. Part 455). The Rule requires the
+// form's wording, capitalization and punctuation to be exactly the FTC's, in
+// black ink, so the text below is the FTC's own (Figures 1–3) — don't reword
+// it. Prints the "AS IS" version (Figure 1) unless the car is offered with
+// implied warranties only, which has its own version (Figure 2).
+export function BuyerGuideDocument({ vehicle, warranty, serviceContract }) {
   const v = vehicle || {};
   const w = warranty || {};
   const type = w.type || "as_is";
+  const dealerWarranty = type === "dealer_full" || type === "dealer_limited";
+  const limited = type === "dealer_limited";
 
   return (
-    <div className="print-area sale-doc buyers-guide">
-      <div className="doc-head">
-        <h2>BUYERS GUIDE</h2>
-      </div>
-      <p className="bg-important">
-        IMPORTANT: Spoken promises are difficult to enforce. Ask the dealer to put all promises in
-        writing. Keep this form.
-      </p>
-      <div className="bg-vehicle-row">
-        <span>VEHICLE MAKE: {v.make}</span>
-        <span>MODEL: {v.model}</span>
-        <span>YEAR: {v.year}</span>
-        <span>VIN: {v.vin}</span>
-      </div>
-
-      <p className="bg-section-title">WARRANTIES FOR THIS VEHICLE:</p>
-
-      <div className={"bg-option" + (type === "as_is" ? " bg-checked" : "")}>
-        <strong>AS IS – NO DEALER WARRANTY</strong>
-        <p>THE DEALER DOES NOT PROVIDE A WARRANTY FOR ANY REPAIRS AFTER SALE.</p>
-      </div>
-
-      <div className={"bg-option" + (type.startsWith("dealer") ? " bg-checked" : "")}>
-        <strong>DEALER WARRANTY</strong>
-        <p>{type === "dealer_full" ? "☑" : "☐"} FULL WARRANTY.</p>
-        <p>
-          {type === "dealer_limited" ? "☑" : "☐"} LIMITED WARRANTY. The dealer will pay{" "}
-          {type === "dealer_limited" ? w.pctLabor || 0 : "____"}% of the labor and{" "}
-          {type === "dealer_limited" ? w.pctParts || 0 : "____"}% of the parts for the covered systems
-          that fail during the warranty period. Ask the dealer for a copy of the warranty, and for any
-          documents that explain warranty coverage, exclusions, and the dealer's repair obligations.
-          Implied warranties under your state's laws may give you additional rights.
+    <div className="print-area buyers-guide">
+      <section className="bg-page">
+        <h2 className="bg-title">BUYERS GUIDE</h2>
+        <p className="bg-important">
+          <strong>IMPORTANT:</strong> Spoken promises are difficult to enforce. Ask the dealer to put all
+          promises in writing. Keep this form.
         </p>
-        {type.startsWith("dealer") && (
-          <p>
-            SYSTEMS COVERED: {w.systems || "—"} &nbsp;&nbsp; DURATION: {w.duration || "—"}
-          </p>
+        <div className="bg-vehicle-row">
+          <div>
+            <span className="bg-fill">{v.make}</span>
+            <span className="bg-cap">VEHICLE MAKE</span>
+          </div>
+          <div>
+            <span className="bg-fill">
+              {v.model}
+              {v.trim ? ` ${v.trim}` : ""}
+            </span>
+            <span className="bg-cap">MODEL</span>
+          </div>
+          <div>
+            <span className="bg-fill">{v.year}</span>
+            <span className="bg-cap">YEAR</span>
+          </div>
+          <div className="bg-vin">
+            <span className="bg-fill">{v.vin}</span>
+            <span className="bg-cap">VEHICLE IDENTIFICATION NUMBER (VIN)</span>
+          </div>
+        </div>
+
+        <p className="bg-section-title">WARRANTIES FOR THIS VEHICLE:</p>
+
+        {type === "implied_only" ? (
+          <div className="bg-option">
+            <p className="bg-head">
+              <BgBox on big /> IMPLIED WARRANTIES ONLY
+            </p>
+            <p>
+              The dealer doesn't make any promises to fix things that need repair when you buy the vehicle
+              or afterward. But <strong>implied warranties</strong> under your state's laws may give you
+              some rights to have the dealer take care of serious problems that were not apparent when you
+              bought the vehicle.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-option">
+            <p className="bg-head">
+              <BgBox on={type === "as_is"} big /> AS IS - NO DEALER WARRANTY
+            </p>
+            <p>THE DEALER DOES NOT PROVIDE A WARRANTY FOR ANY REPAIRS AFTER SALE.</p>
+          </div>
         )}
-      </div>
 
-      <div className={"bg-option" + (type === "implied_only" ? " bg-checked" : "")}>
-        <strong>IMPLIED WARRANTIES ONLY</strong>
+        <div className="bg-option">
+          <p className="bg-head">
+            <BgBox on={dealerWarranty} big /> DEALER WARRANTY
+          </p>
+          <p>
+            <BgBox on={type === "dealer_full"} /> <strong>FULL</strong> WARRANTY.
+          </p>
+          <p>
+            <BgBox on={limited} /> <strong>LIMITED</strong> WARRANTY. The dealer will pay{" "}
+            {limited ? num(w.pctLabor) : "____"}% of the labor and {limited ? num(w.pctParts) : "____"}% of
+            the parts for the covered systems that fail during the warranty period. Ask the dealer for a
+            copy of the warranty, and for any documents that explain warranty coverage, exclusions, and the
+            dealer's repair obligations. <strong>Implied warranties</strong> under your state's laws may
+            give you additional rights.
+          </p>
+          <div className="bg-systems">
+            <div>
+              <strong>SYSTEMS COVERED:</strong>
+              <span className="bg-lines">{dealerWarranty ? w.systems : ""}</span>
+            </div>
+            <div>
+              <strong>DURATION:</strong>
+              <span className="bg-lines">{dealerWarranty ? w.duration : ""}</span>
+            </div>
+          </div>
+        </div>
+
+        <p className="bg-section-title">NON-DEALER WARRANTIES FOR THIS VEHICLE:</p>
         <p>
-          The dealer doesn't make any promises to fix things that need repair when you buy the vehicle
-          or afterward. But implied warranties under your state's laws may give you some rights to have
-          the dealer take care of serious problems that were not apparent when you bought the vehicle.
+          <BgBox /> MANUFACTURER'S WARRANTY STILL APPLIES. The manufacturer's original warranty has not
+          expired on some components of the vehicle.
         </p>
-      </div>
+        <p>
+          <BgBox /> MANUFACTURER'S USED VEHICLE WARRANTY APPLIES.
+        </p>
+        <p>
+          <BgBox /> OTHER USED VEHICLE WARRANTY APPLIES.
+        </p>
+        <p>
+          Ask the dealer for a copy of the warranty document and an explanation of warranty coverage,
+          exclusions, and repair obligations.
+        </p>
+        <p className="bg-service">
+          <BgBox on={!!serviceContract} /> <strong>SERVICE CONTRACT.</strong> A service contract on this
+          vehicle is available for an extra charge. Ask for details about coverage, deductible, price, and
+          exclusions. If you buy a service contract within 90 days of your purchase of this vehicle,{" "}
+          <strong>implied warranties</strong> under your state's laws may give you additional rights.
+        </p>
 
-      <p className="bg-section-title">NON-DEALER WARRANTIES FOR THIS VEHICLE:</p>
-      <p>☐ MANUFACTURER'S WARRANTY STILL APPLIES. The manufacturer's original warranty has not expired on some components of the vehicle.</p>
-      <p>☐ MANUFACTURER'S USED VEHICLE WARRANTY APPLIES.</p>
-      <p>☐ OTHER USED VEHICLE WARRANTY APPLIES.</p>
-      <p>
-        Ask the dealer for a copy of the warranty document and an explanation of warranty coverage,
-        exclusions, and repair obligations.
-      </p>
-      <p>
-        ☐ SERVICE CONTRACT. A service contract on this vehicle is available for an extra charge. Ask for
-        details about coverage, deductible, price, and exclusions. If you buy a service contract within
-        90 days of your purchase of this vehicle, implied warranties under your state's laws may give you
-        additional rights.
-      </p>
+        <div className="bg-bottom">
+          <p>
+            <strong>ASK THE DEALER IF YOUR MECHANIC CAN INSPECT THE VEHICLE ON OR OFF THE LOT.</strong>
+          </p>
+          <p>
+            <strong>OBTAIN A VEHICLE HISTORY REPORT AND CHECK FOR OPEN SAFETY RECALLS.</strong> For
+            information on how to obtain a vehicle history report, visit <strong>ftc.gov/usedcars</strong>.
+            To check for open safety recalls, visit <strong>safercar.gov.</strong> You will need the vehicle
+            identification number (VIN) shown above to make the best use of the resources on these sites.
+          </p>
+          <p>
+            <strong>SEE OTHER SIDE</strong> for important additional information, including a list of major
+            defects that may occur in used motor vehicles.
+          </p>
+          <p>
+            Si el concesionario gestiona la venta en español, pídale una copia de la Guía del Comprador en
+            español.
+          </p>
+        </div>
+      </section>
 
-      <p className="bg-bold">ASK THE DEALER IF YOUR MECHANIC CAN INSPECT THE VEHICLE ON OR OFF THE LOT.</p>
-      <p>
-        <strong>OBTAIN A VEHICLE HISTORY REPORT AND CHECK FOR OPEN SAFETY RECALLS.</strong> For
-        information on how to obtain a vehicle history report, visit ftc.gov/usedcars. To check for open
-        safety recalls, visit safercar.gov. You will need the vehicle identification number (VIN) shown
-        above to make the best use of the resources on these sites.
-      </p>
-      <p>
-        <strong>SEE OTHER SIDE</strong> for important additional information, including a list of major
-        defects that may occur in used motor vehicles.
-      </p>
-      <p className="micro">
-        Si el concesionario gestiona la venta en español, pídale una copia de la Guía del Comprador en
-        español.
-      </p>
-
-      <div className="bg-defects">
-        <p className="bg-section-title">Here is a list of some major defects that may occur in used vehicles.</p>
+      <section className="bg-page bg-back">
+        <p className="bg-defects-title">Here is a list of some major defects that may occur in used vehicles.</p>
         <div className="bg-defects-grid">
+          {BG_DEFECTS.map((col, i) => (
+            <div key={i}>
+              {col.map(([head, items]) => (
+                <div key={head} className="bg-defect">
+                  <strong>{head}</strong>
+                  {items.map((it) => (
+                    <span key={it}>{it}</span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-dealer">
           <div>
-            <strong>Frame &amp; Body</strong>
-            <p>Frame—cracks, corrective welds, or rusted through. Dog tracks—bent or twisted frame.</p>
-            <strong>Engine</strong>
-            <p>
-              Oil leakage, excluding normal seepage. Cracked block or head. Belts missing or inoperable.
-              Knocks or misses related to camshaft, lifters and push rods. Abnormal exhaust discharge.
-            </p>
-            <strong>Transmission &amp; Drive Shaft</strong>
-            <p>
-              Improper fluid level or leakage, excluding normal seepage. Cracked or damaged case which is
-              visible. Abnormal noise or vibration. Improper shifting. Manual clutch slips or chatters.
-            </p>
-            <strong>Differential</strong>
-            <p>Improper fluid level or leakage. Cracked or damaged housing which is visible. Abnormal noise or vibration.</p>
-            <strong>Cooling System</strong>
-            <p>Leakage including radiator. Improperly functioning water pump.</p>
+            <span className="bg-fill">{DEALER.legalName}</span>
+            <span className="bg-cap">DEALER NAME</span>
           </div>
           <div>
-            <strong>Electrical System</strong>
-            <p>Battery leakage. Improperly functioning alternator, generator, battery, or starter.</p>
-            <strong>Fuel System</strong>
-            <p>Visible leakage.</p>
-            <strong>Inoperable Accessories</strong>
-            <p>Gauges or warning devices. Air conditioner. Heater &amp; defroster.</p>
-            <strong>Brake System</strong>
-            <p>
-              Failure warning light broken. Pedal not firm under pressure. Not enough pedal reserve. Does
-              not stop vehicle in straight line. Hoses damaged. Drum or rotor too thin. Lining or pad
-              thickness less than 1/32 inch. Power unit not operating or leaking. Structural or mechanical
-              parts damaged.
-            </p>
-            <strong>Air Bags</strong>
+            <span className="bg-fill">
+              {DEALER.address}, {DEALER.city}
+            </span>
+            <span className="bg-cap">ADDRESS</span>
+          </div>
+          <div className="bg-two">
+            <div>
+              <span className="bg-fill">{DEALER.phone}</span>
+              <span className="bg-cap">TELEPHONE</span>
+            </div>
+            <div>
+              <span className="bg-fill">{DEALER.email}</span>
+              <span className="bg-cap">EMAIL</span>
+            </div>
           </div>
           <div>
-            <strong>Steering System</strong>
-            <p>
-              Too much free play at steering wheel. Free play in linkage more than 1/4 inch. Steering gear
-              binds or jams. Front wheels aligned improperly. Power unit belts cracked or slipping. Power
-              unit fluid level improper.
-            </p>
-            <strong>Suspension System</strong>
-            <p>
-              Ball joint seals damaged. Structural parts bent or damaged. Stabilizer bar disconnected.
-              Spring broken. Shock absorber mounting loose or leaking. Rubber bushings damaged or missing.
-              Radius rod damaged or missing.
-            </p>
-            <strong>Tires</strong>
-            <p>Tread depth less than 2/32 inch. Sizes mismatched. Visible damage.</p>
-            <strong>Wheels</strong>
-            <p>Visible cracks, damage or repairs. Mounting bolts loose or missing.</p>
-            <strong>Exhaust System</strong>
-            <p>Leakage. Catalytic converter.</p>
+            <span className="bg-fill">
+              {DEALER.legalName} — {DEALER.phone}
+            </span>
+            <span className="bg-cap">FOR COMPLAINTS AFTER SALE, CONTACT:</span>
           </div>
+          {/* The optional signature line 16 C.F.R. § 455.2(f) allows, with
+              its required sentence. Virginia (§ 46.2-1529.1) needs the guide
+              signed and dated by the buyer, so it isn't optional here. */}
+          <div className="bg-two">
+            <div>
+              <span className="bg-fill">X</span>
+              <span className="bg-cap">BUYER'S SIGNATURE</span>
+            </div>
+            <div>
+              <span className="bg-fill" />
+              <span className="bg-cap">DATE</span>
+            </div>
+          </div>
+          <p className="bg-ack">I hereby acknowledge receipt of the Buyers Guide at the closing of this sale.</p>
         </div>
-      </div>
 
-      <div className="doc-signatures" style={{ marginTop: 18 }}>
-        <div>
-          <p>{DEALER.legalName}</p>
-          <p>{DEALER.address}, {DEALER.city}</p>
-          <p>{DEALER.phone}</p>
-        </div>
-        <div>
-          <span className="micro">FOR COMPLAINTS AFTER SALE, CONTACT:</span>
-          <p>{DEALER.legalName} — {DEALER.phone}</p>
-        </div>
-      </div>
-
-      {/* Not part of the base federal form — added per Code of Virginia
-          § 46.2-1529.1, which requires the Buyer's Guide be signed and
-          dated by the buyer and incorporated into the buyer's order. */}
-      <p className="bg-ack">I HEREBY ACKNOWLEDGE RECEIPT OF THE BUYERS GUIDE AT THE CLOSING OF THIS SALE.</p>
-      <p className="doc-sign-line">X ___________________________ ___________</p>
-      <p className="micro" style={{ marginTop: -4 }}>CUSTOMER SIGNATURE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; DATE</p>
-
-      <p className="doc-legal">
-        IMPORTANT: The information on this form is part of any contract to buy this vehicle. Removing
-        this label before consumer purchase (except for the purpose of test-driving) violates federal law
-        (16 C.F.R. 455).
-      </p>
+        <p className="bg-final">
+          <strong>IMPORTANT:</strong> The information on this form is part of any contract to buy this
+          vehicle. Removing this label before consumer purchase (except for purpose of test-driving)
+          violates federal law (16 C.F.R. 455).
+        </p>
+      </section>
     </div>
   );
 }

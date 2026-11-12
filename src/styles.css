@@ -293,93 +293,101 @@ button{font:inherit;cursor:pointer}
 .settle-row.strong{border-top:1px solid var(--line);padding-top:8px;margin-top:2px;font-weight:600}
 .settle-row.big strong{font-family:var(--display);font-size:19px;color:var(--navy-700)}
 
-/* printable buyer's order */
-.print-area{padding:16px}
+/* ---------- printable documents ----------
+   Sizes are in points because several are legal minimums: the "AS IS"
+   disclosure and financing notice must be bold and at least 10-point, and
+   "NO LIABILITY INSURANCE INCLUDED" bold and at least 18-point (Va. Code
+   §§ 46.2-1529.1, 46.2-1530). Don't shrink .vo-legal or .vo-noliab. */
+.print-area{padding:0;background:#fff;color:#000}
 .sale-doc{background:#fff;color:#111;font-size:12px;line-height:1.4}
-.doc-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:14px}
-.doc-head h2{font-size:20px;margin:0}
-.doc-letterhead{font-size:11px;color:#333;margin:2px 0 0}
-.doc-head>div:last-child{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:12px}
-.doc-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
-.doc-col section{border:1px solid #ccc;padding:10px 12px;margin-bottom:10px}
-.doc-col h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px;border-bottom:1px solid #ccc;padding-bottom:4px}
-.doc-col p{margin:2px 0}
-.doc-settlement .doc-row{display:flex;justify-content:space-between;font-size:12px;padding:2px 0}
-.doc-row.strong{border-top:1px solid #ccc;margin-top:3px;padding-top:4px;font-weight:700}
-.doc-row.big{font-size:14px}
-.doc-warranty{border:1px solid #111;padding:10px 12px;margin-top:14px;font-size:14px;font-weight:700}
-.doc-warranty-type{font-size:15px;margin:0 0 6px;text-decoration:underline}
-.doc-financing{border:1px solid #111;padding:10px 12px;margin-top:12px;font-size:9px;font-weight:700;line-height:1.5}
-.doc-sign-line{display:block;margin-top:10px;font-weight:400}
-/* MVDB-44: "NO LIABILITY INSURANCE INCLUDED" must be boldface, no smaller
-   than 18-point type, printed on the face of the buyer's order. */
-.doc-noliab{text-align:center;border:1px solid #111;padding:8px;margin-top:12px;font-weight:700;letter-spacing:.06em;font-size:24px}
-.doc-legal{font-size:10px;color:#333;margin-top:10px}
-.doc-signatures{display:flex;justify-content:space-between;gap:16px;margin-top:22px;flex-wrap:wrap}
-.doc-signatures>div{flex:1;min-width:180px}
-.doc-foot{text-align:center;font-size:10px;color:#555;margin-top:18px;border-top:1px solid #ccc;padding-top:6px}
+.doc-sign-line{display:block;margin-top:10pt;font-weight:400}
+.doc-legal{font-size:7pt;margin:6pt 0 0}
+.doc-signatures{display:flex;justify-content:space-between;gap:12pt;margin-top:8pt}
+.doc-signatures>div{flex:1;min-width:0}
+.doc-signatures .micro{display:block;font-family:Arial,Helvetica,sans-serif;font-size:5.5pt;letter-spacing:.04em;color:#000;font-weight:400}
+.doc-foot{text-align:center;font-size:6.5pt;margin-top:8pt;border-top:1px solid #000;padding-top:3pt}
 
-/* buyer's order — visual layout modeled on a real VIADA Buyers Order
-   (VIA 7B), using a plain functional font and continuous bordered-box
-   "ledger" look rather than this site's branded display fonts/rounded
-   cards, since a legal form reads as a legal form, not a marketing page. */
-.vo-doc{background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:1.35}
-.vo-top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #000;padding-bottom:6px}
-.vo-title{font-size:24px;font-weight:800;letter-spacing:.02em;margin:0}
-.vo-stockbox{border:1px solid #000;width:170px;font-size:10px}
-.vo-stockbox div{display:flex;justify-content:space-between;gap:8px;padding:3px 6px;border-bottom:1px solid #000}
+/* buyer's order — a plain bordered-box "ledger" form */
+.vo-doc{font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;line-height:1.3}
+.vo-doc p{margin:0}
+.vo-top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2pt solid #000;padding-bottom:4pt}
+.vo-title{font-family:Arial,Helvetica,sans-serif;font-size:18pt;font-weight:800;letter-spacing:.02em;margin:0}
+.vo-stockbox{border:1px solid #000;width:130pt;font-size:7.5pt}
+.vo-stockbox div{display:flex;justify-content:space-between;gap:6pt;padding:2pt 4pt;border-bottom:1px solid #000}
 .vo-stockbox div:last-child{border-bottom:0}
-.vo-letterhead{font-size:9px;color:#333;text-align:center;margin:3px 0 8px}
+.vo-doc .vo-letterhead{font-size:8pt;font-weight:700;text-align:center;margin:3pt 0 5pt}
 
-.vo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.vo-grid{display:grid;grid-template-columns:1fr 1fr;gap:6pt;align-items:start}
 .vo-col{border:1px solid #000}
-.vf-row{display:flex;flex-wrap:wrap;border-top:1px solid #000}
+.vf-row{display:flex;border-top:1px solid #000}
 .vo-col>.vf-row:first-child{border-top:0}
-.vf{flex:1;min-width:0;padding:3px 6px;border-right:1px solid #000}
+.vf{flex:1;min-width:0;padding:1.5pt 4pt;border-right:1px solid #000}
 .vf:last-child{border-right:0}
-.vf-full{flex-basis:100%}
-.vf-label{display:block;font-size:7px;text-transform:uppercase;letter-spacing:.02em;color:#444}
-.vf-val{display:block;font-size:11px;font-weight:600;min-height:13px;word-break:break-word}
-.vo-checks{font-size:10px;font-weight:600}
+.vf-full{flex:2.2}
+.vf-label{display:block;font-size:5.5pt;text-transform:uppercase;letter-spacing:.02em}
+.vf-val{display:block;font-size:8.5pt;font-weight:700;min-height:10pt;overflow-wrap:anywhere}
+.vo-checks{font-size:8pt;font-weight:700}
 
-.vo-asis{display:block;padding:0}
-.vo-asis .vf{border-right:0}
-.vo-asis .vf-label{font-size:11px;text-decoration:underline;font-weight:700;color:#000}
-.vo-asis p{font-size:9px;font-weight:700;margin:4px 0}
+.vo-asis{display:block}
+.vo-asis .vf{border-right:0;padding:3pt 4pt}
+.vo-asis .vf-label{font-size:9pt;text-decoration:underline;font-weight:700}
+.vo-doc .vo-legal{font-size:10pt;font-weight:700;line-height:1.2;margin:3pt 0}
+.vo-doc .vo-sign{font-size:8pt;margin:7pt 0 4pt}
+.vo-doc .vo-notice{font-size:6.5pt;line-height:1.25;margin:3pt 0 0}
+.vo-doc .vo-pay{text-align:right;padding:3pt 4pt;margin:0;border-top:1px solid #000;font-weight:700}
 
-.vo-trade{position:relative;padding-left:14px}
-.vo-trade-tag{position:absolute;left:2px;top:3px;writing-mode:vertical-rl;font-size:7px;font-weight:700;letter-spacing:.05em}
 
-.vo-noliab{text-align:center;border-top:2px solid #000;padding:6px;margin-top:0;font-weight:800;letter-spacing:.04em;font-size:22px}
-.vo-noliab-sub{font-size:7px;font-weight:700;padding:4px 6px;line-height:1.4;border-top:1px solid #000}
+.vo-noliab{text-align:center;border-top:2pt solid #000;padding:4pt 2pt;font-weight:800;font-size:18pt;line-height:1.1}
 
-.vn{display:flex;align-items:center;gap:6px;border-top:1px solid #000;padding:2px 6px;font-size:10px}
-.vo-col>.vn:first-of-type{border-top:0}
+.vn{display:flex;align-items:center;gap:4pt;border-top:1px solid #000;padding:1.5pt 4pt;font-size:7.5pt}
 .vn-label{flex:1}
-.vn-num{font-size:9px;color:#444;width:22px;text-align:center}
-.vn-val{width:70px;text-align:right;font-weight:600}
-.vn-strong{font-weight:800;background:#f2f2f2}
+.vn-num{font-size:6.5pt;width:18pt;text-align:center}
+.vn-val{min-width:54pt;text-align:right;font-weight:700}
+.vn-strong{font-weight:800;border-top-width:1.5pt}
 
-.doc-terms-exact{font-weight:700;font-size:9px}
-.doc-terms{page-break-before:always;padding-top:18px;font-size:10px;line-height:1.5}
-.doc-terms-title{font-weight:700;text-align:center;font-size:12px;letter-spacing:.04em;margin-bottom:10px}
-.doc-terms ol{margin:0;padding-left:18px}
-.doc-terms li{margin-bottom:9px}
+.doc-terms{break-before:page;page-break-before:always;padding-top:6pt;font-size:8pt;line-height:1.4}
+.vo-doc .doc-terms-title{font-weight:700;text-align:center;font-size:10pt;letter-spacing:.04em;margin-bottom:8pt}
+.doc-terms ol{margin:0;padding-left:16pt}
+.doc-terms li{margin-bottom:6pt}
+.vo-doc .vo-finance{border:1.5pt solid #000;padding:6pt;margin-top:10pt}
 
-/* printable buyer's guide */
-.buyers-guide{font-size:11px}
-.bg-important{font-weight:700;border-bottom:1px solid #111;padding-bottom:8px;margin-bottom:10px}
-.bg-vehicle-row{display:flex;gap:18px;flex-wrap:wrap;font-size:10px;font-weight:700;border-bottom:1px solid #111;padding-bottom:6px;margin-bottom:8px}
-.bg-section-title{font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px;border-bottom:1px solid #111;padding-bottom:3px}
-.bg-option{border-bottom:1px dashed #999;padding:6px 0}
-.bg-option strong{font-size:14px}
-.bg-option.bg-checked{background:#F5F0E0}
-.bg-bold{font-weight:700;margin-top:8px}
-.bg-ack{font-weight:700;margin-top:16px;border-top:1px solid #111;padding-top:10px}
-.bg-defects{margin-top:12px;page-break-before:always}
-.bg-defects-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;font-size:10px}
-.bg-defects-grid strong{display:block;margin-top:6px;font-size:10px}
-.bg-defects-grid p{margin:2px 0 4px}
+/* Buyers Guide — type sizes follow the FTC's own form (16 C.F.R. Part 455,
+   Figures 1–3). The Rule requires black ink on white, so nothing here may
+   use colour or a background tint; a marked box is an "X", not a shade. */
+.buyers-guide{font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.25}
+.buyers-guide p{margin:0 0 4pt}
+.bg-page{border:1.5pt solid #000;padding:10pt 14pt}
+.bg-back{break-before:page;page-break-before:always}
+.bg-title{font-family:Arial,Helvetica,sans-serif;font-size:26pt;font-weight:800;text-align:center;margin:0 0 4pt;letter-spacing:.01em}
+.buyers-guide .bg-important{border-top:1.5pt solid #000;border-bottom:1.5pt solid #000;padding:4pt 0;margin-bottom:8pt}
+.bg-vehicle-row{display:flex;gap:10pt;margin-bottom:6pt}
+.bg-vehicle-row>div{flex:1;min-width:0}
+.bg-vehicle-row>.bg-vin{flex:2}
+.bg-fill{display:block;border-bottom:1px solid #000;min-height:13pt;font-size:10pt;font-weight:700;overflow-wrap:anywhere}
+.bg-cap{display:block;font-size:6pt;margin-top:1pt}
+.buyers-guide .bg-section-title{font-size:12pt;font-weight:800;border-top:1.5pt solid #000;padding-top:4pt;margin:6pt 0 4pt}
+.bg-option{margin-bottom:6pt}
+.buyers-guide .bg-head{font-size:24pt;font-weight:800;line-height:1.1;margin:4pt 0 3pt;display:flex;align-items:center;gap:8pt}
+.bg-box{display:inline-block;width:9pt;height:9pt;border:1pt solid #000;margin-right:3pt;vertical-align:-1.5pt;
+  font-size:8pt;font-weight:800;line-height:7.5pt;text-align:center}
+.bg-box-big{width:22pt;height:22pt;border-width:1.5pt;font-size:20pt;line-height:19pt;margin-right:0;flex:none}
+.bg-systems{display:flex;gap:12pt;font-size:9pt;margin-top:4pt}
+.bg-systems>div{flex:1;min-width:0}
+.bg-lines{display:block;min-height:26pt;font-weight:700;font-size:10pt;margin-top:2pt;border-bottom:1px solid #000}
+.buyers-guide .bg-service{margin-top:6pt}
+.bg-bottom{border-top:1.5pt solid #000;padding-top:5pt;margin-top:6pt;font-size:9pt}
+
+.buyers-guide .bg-defects-title{font-size:8pt;font-weight:700;margin-bottom:6pt}
+.bg-defects-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12pt;font-size:7pt;line-height:1.3}
+.bg-defect{margin-bottom:6pt}
+.bg-defect strong,.bg-defect span{display:block}
+.bg-defect span{padding-left:6pt}
+.bg-dealer{margin-top:14pt;display:flex;flex-direction:column;gap:8pt}
+.bg-dealer .bg-cap{font-size:8pt;font-weight:700}
+.bg-two{display:flex;gap:14pt}
+.bg-two>div{flex:1;min-width:0}
+.bg-ack{font-size:8.5pt}
+.buyers-guide .bg-final{font-size:9pt;border-top:1.5pt solid #000;padding-top:6pt;margin-top:10pt}
 
 /* printable "not ready for sale" lot tag */
 .tag-doc{font-family:var(--display);text-align:center;padding:40px 24px}
@@ -392,7 +400,9 @@ button{font:inherit;cursor:pointer}
    wholesale on print leaves no invisible-but-still-occupying-space content
    behind to break pagination. */
 .print-portal{display:none}
+@page{size:letter;margin:0.4in}
 @media print{
+  html,body{margin:0;background:#fff}
   #root{display:none !important}
   .print-portal{display:block !important}
 }
@@ -446,3 +456,8 @@ button{font:inherit;cursor:pointer}
   *{transition:none!important;animation:none!important}
 }
 .tag-pending{background:#fff;color:var(--navy-900);border:1px solid var(--navy-900)}
+/* Va. Code § 46.2-1581(8): the processing fee has to be disclosed with the
+   advertised price in bold type no smaller than 8-point (about 11px). */
+.price-note{font-size:13px;font-weight:700;color:var(--muted);margin-top:6px}
+.inv .price-note{margin-top:22px;text-align:center}
+.lead-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}

@@ -1,9 +1,26 @@
 /* ---------- buyer's order settlement math ---------- */
-const num = (v) => Number(v) || 0;
+// Tolerates "$14,500.00" as typed — a bare Number() turns that into 0.
+export const num = (v) => Number(String(v ?? "").replace(/[$,\s]/g, "")) || 0;
 
-export function calcVaTax(subtotal) {
-  const t = num(subtotal) * 0.0415;
+// Va. Code § 58.1-2402: 4.15% of the sale price, $75 minimum. "Sale price"
+// (§ 58.1-2401) is the full price including accessories and the processing
+// fee, "without any allowance or deduction for trade-ins" — so this takes
+// the cash price, never the after-trade difference.
+export const VA_VEHICLE_TAX_RATE = 0.0415;
+export function calcVaTax(salePrice) {
+  const t = num(salePrice) * VA_VEHICLE_TAX_RATE;
   return Math.round(Math.max(t, 75) * 100) / 100;
+}
+
+// A dealer-sold service contract covering parts and labor is taxed under the
+// retail sales tax (23VAC10-210-910), not the motor vehicle tax above: half
+// the price, at the local retail rate — 6% in Henrico.
+export const SERVICE_CONTRACT_TAX_RATE = 0.06;
+
+export function todayLocal() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 export function lineTotal(rows) {
@@ -15,9 +32,8 @@ export function saleTotals(s) {
   const netTradeAllowance = num(s.gross_trade_allowance) - num(s.trade_payoff);
   const subtotal = cashPrice - netTradeAllowance;
   const otherChargesTotal = lineTotal(s.other_charges);
-  // MVDB guidance: a service contract's sales tax is owed on half its
-  // retail cost, not the full amount.
-  const serviceContractTax = Math.round(((num(s.service_contract_amount) / 2) * 0.0415) * 100) / 100;
+  const serviceContractTax =
+    Math.round((num(s.service_contract_amount) / 2) * SERVICE_CONTRACT_TAX_RATE * 100) / 100;
   const taxesFeesTotal =
     num(s.sales_tax) +
     num(s.license_fee) +
@@ -31,6 +47,7 @@ export function saleTotals(s) {
     serviceContractTax +
     otherChargesTotal;
   const totalDue = subtotal + taxesFeesTotal;
+  const totalPrice = cashPrice + taxesFeesTotal;
   const totalCredit = num(s.deposit) + num(s.down_payment);
   const balanceDue = totalDue - totalCredit;
   const expensesTotal = lineTotal(s.car_expenses);
@@ -44,6 +61,7 @@ export function saleTotals(s) {
     serviceContractTax,
     taxesFeesTotal,
     totalDue,
+    totalPrice,
     totalCredit,
     balanceDue,
     expensesTotal,
@@ -53,7 +71,7 @@ export function saleTotals(s) {
 
 export const BLANK_SALE = {
   car_id: null,
-  sale_date: new Date().toISOString().slice(0, 10),
+  sale_date: "",
   stock_number: "",
   vehicle: {
     newUsed: "Used",

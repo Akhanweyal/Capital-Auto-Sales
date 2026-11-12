@@ -1,19 +1,29 @@
 // Pushes a phone notification to the dealer's cell whenever a new lead row
 // is inserted into `leads`, via ntfy.sh (the same push service already used
-// for the towing business). Supabase calls this directly through a
-// Database Webhook (Database -> Webhooks in the Supabase dashboard, firing
-// on INSERT to public.leads) — it's never called from the browser, so the
-// usual requireUser() Bearer-token check doesn't apply here. Instead it's
-// protected by a shared secret the webhook sends as a custom header, since
+// for the towing business). Supabase calls this from a database trigger on
+// INSERT to public.leads — it's never called from the browser, so the usual
+// requireUser() Bearer-token check doesn't apply here. Instead it's
+// protected by a shared secret the trigger sends as a custom header, since
 // the URL itself is otherwise publicly reachable.
 //
 // Required env vars (set in Vercel):
 //   NTFY_TOPIC      — the ntfy.sh topic to publish to (treat like a password:
 //                      anyone who knows it can read or spoof notifications)
-//   WEBHOOK_SECRET  — shared secret; must match the header value configured
-//                      on the Supabase webhook
+//   WEBHOOK_SECRET  — shared secret; must match the header value the
+//                      database trigger sends
+
+import { timingSafeEqual } from "node:crypto";
 
 const NTFY_SERVER = "https://ntfy.sh";
+
+function secretMatches(given, expected) {
+  const a = Buffer.from(String(given || ""));
+  const b = Buffer.from(String(expected || ""));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// The form is public, so cap what a stranger can push to the phone.
+const clip = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -22,7 +32,7 @@ export default async function handler(req, res) {
   }
 
   const secret = process.env.WEBHOOK_SECRET;
-  if (!secret || req.headers["x-webhook-secret"] !== secret) {
+  if (!secret || !secretMatches(req.headers["x-webhook-secret"], secret)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -34,32 +44,43 @@ export default async function handler(req, res) {
   }
 
   const record = (req.body && req.body.record) || {};
-  const { name, phone, note, car_label, price } = record;
+  const name = clip(record.name, 80);
+  const phone = clip(record.phone, 30);
+  const note = clip(record.note, 300);
+  const carLabel = clip(record.car_label, 80);
 
-  const lines = [name ? `From: ${name}` : null, phone ? `Phone: ${phone}` : null, note ? `Note: ${note}` : null].filter(
-    Boolean
-  );
+  const lines = [name && `From: ${name}`, phone && `Phone: ${phone}`, note && `Note: ${note}`].filter(Boolean);
   const message = lines.length ? lines.join("\n") : "New lead submitted — check the admin panel.";
-  const priceStr = price
-    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(price)
-    : null;
-  const title = car_label ? `New inquiry: ${car_label}${priceStr ? ` (${priceStr})` : ""}` : "New car inquiry";
+  const priceStr = Number(record.price)
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
+        Number(record.price)
+      )
+    : "";
+  const title = carLabel ? `New inquiry: ${carLabel}${priceStr ? ` (${priceStr})` : ""}` : "New car inquiry";
+
+  const digits = phone.replace(/[^0-9+]/g, "");
 
   try {
-    await fetch(`${NTFY_SERVER}/${encodeURIComponent(topic)}`, {
+    // ntfy's JSON publish, not the header form: HTTP headers can't carry
+    // accents or other non-Latin characters, and a customer's name can.
+    const r = await fetch(NTFY_SERVER, {
       method: "POST",
-      headers: {
-        Title: title,
-        Priority: "high",
-        Tags: "car",
-      },
-      body: message,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic,
+        title,
+        message,
+        priority: 4,
+        tags: ["car"],
+        ...(digits.length >= 7 ? { click: `tel:${digits}` } : {}),
+      }),
     });
+    if (!r.ok) throw new Error(`ntfy responded ${r.status}`);
     res.status(200).json({ ok: true });
   } catch (e) {
     console.error("notify-lead: failed to reach ntfy —", e && e.message);
-    // Still 200 — Supabase retries failed webhooks, and a retry storm over a
-    // transient ntfy outage isn't worth it for a best-effort notification.
+    // Still 200 — a retry storm over a transient ntfy outage isn't worth it
+    // for a best-effort notification; the lead itself is already saved.
     res.status(200).json({ error: "Failed to send notification" });
   }
 }
