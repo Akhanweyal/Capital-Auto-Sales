@@ -53,7 +53,7 @@ export const DEALER = {
   // Va. Code § 46.2-1581(8): when a price is advertised without this fee
   // included, the fee's amount has to be shown with it — so this prints
   // next to every price on the website and pre-fills each buyer's order.
-  processingFee: 0,
+  processingFee: 299,
   // Printed on the back of the Buyers Guide; leave "" if there isn't one.
   email: "",
 };
