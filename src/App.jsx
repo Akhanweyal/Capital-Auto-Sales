@@ -54,6 +54,8 @@ export const DEALER = {
   // included, the fee's amount has to be shown with it — so this prints
   // next to every price on the website and pre-fills each buyer's order.
   processingFee: 299,
+  // Virginia dealer license number, printed on the buyer's order.
+  licenseNo: "27858-1-I-0-60707",
   // Printed on the back of the Buyers Guide; leave "" if there isn't one.
   email: "",
 };
@@ -3681,6 +3683,7 @@ export function SaleDocument({ s, totals }) {
       </div>
       <p className="vo-letterhead">
         {DEALER.legalName} — {DEALER.address}, {DEALER.city} — {DEALER.phone}
+        {DEALER.licenseNo ? ` — VA Dealer Lic # ${DEALER.licenseNo}` : ""}
       </p>
 
       <div className="vo-grid">
