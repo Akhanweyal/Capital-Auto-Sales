@@ -15,6 +15,7 @@ const fromRow = (r) => ({
   make: r.make,
   model: r.model,
   trim: r.trim || "",
+  color: r.color || "",
   price: Number(r.price) || 0,
   mileage: Number(r.mileage) || 0,
   condition: r.condition || "Good",
@@ -44,6 +45,7 @@ const toRow = (c) => ({
   make: c.make,
   model: c.model,
   trim: c.trim || "",
+  color: (c.color || "").trim(),
   price: Number(c.price) || 0,
   mileage: Number(c.mileage) || 0,
   condition: c.condition,
@@ -85,10 +87,31 @@ export async function fetchAllCars() {
   return data.map(fromRow);
 }
 
+// The cars table gets a "color" column from a one-line SQL update (see
+// supabase/schema.sql). Until that has been run, a write that includes it
+// fails — so on that one error, save again without it rather than losing the
+// whole car, and report that the color wasn't kept.
+let colorColumnMissing = false;
+const dropColor = ({ color, ...rest }) => rest;
+const mentionsColor = (e) => !!e && /\bcolor\b/i.test(`${e.message || ""} ${e.details || ""}`);
+
+async function writeCar(send, row) {
+  if (!colorColumnMissing) {
+    const first = await send(row);
+    if (!first.error || !("color" in row) || !mentionsColor(first.error)) return first;
+    colorColumnMissing = true;
+  }
+  const second = await send(dropColor(row));
+  return { ...second, colorNotSaved: !!row.color };
+}
+
 export async function insertCar(car) {
-  const { data, error } = await supabase.from("cars").insert(toRow(car)).select().single();
+  const { data, error, colorNotSaved } = await writeCar(
+    (r) => supabase.from("cars").insert(r).select().single(),
+    toRow(car)
+  );
   if (error) throw error;
-  return fromRow(data);
+  return { ...fromRow(data), colorNotSaved: !!colorNotSaved };
 }
 
 export async function updateCar(id, patch) {
@@ -98,6 +121,7 @@ export async function updateCar(id, patch) {
     make: "make",
     model: "model",
     trim: "trim",
+    color: "color",
     price: "price",
     mileage: "mileage",
     condition: "condition",
@@ -121,9 +145,12 @@ export async function updateCar(id, patch) {
     row.photos = patch.photos;
     row.cover_url = patch.photos[0] ? patch.photos[0].url : "";
   }
-  const { data, error } = await supabase.from("cars").update(row).eq("id", id).select().single();
+  const { data, error, colorNotSaved } = await writeCar(
+    (r) => supabase.from("cars").update(r).eq("id", id).select().single(),
+    row
+  );
   if (error) throw error;
-  return fromRow(data);
+  return { ...fromRow(data), colorNotSaved: !!colorNotSaved };
 }
 
 export async function deleteCar(car) {

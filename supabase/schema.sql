@@ -461,3 +461,8 @@ begin
   end if;
 end $$;
 
+
+-- ---------- vehicle color (shown on the car's page, carried onto the buyer's
+-- order). The app still saves cars if this hasn't been run yet — it just
+-- can't keep the color until it has.
+alter table public.cars add column if not exists color text default '';

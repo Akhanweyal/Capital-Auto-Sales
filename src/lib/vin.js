@@ -16,6 +16,10 @@ const VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
 // ISO 3779 / NHTSA) computed from the other 16 — scanning an unrelated barcode
 // (a parts label, a QR code, etc.) that happens to be 17 alnum chars will
 // almost never satisfy it, so it's a reliable way to reject mis-scans.
+//
+// It is NOT proof a misread photo is right: roughly 1 in 11 random misreads
+// still passes. Anything read by OCR must also decode cleanly (see
+// decodeVin's `clean`) before it is trusted.
 export function isValidVin(vin) {
   const s = (vin || "").toUpperCase();
   if (!isValidVinFormat(s)) return false;
@@ -30,70 +34,50 @@ export function isValidVin(vin) {
   return s[8] === expected;
 }
 
-// A title or registration barcode (often PDF417) typically encodes several
-// fields as one string — title number, VIN, owner/state data — not just the
-// bare VIN, so an exact match against the whole string misses it. Try the
-// whole string first, then fall back to scanning it for any 17-char,
-// VIN-charset window that passes the checksum.
-// A VIN never contains I, O or Q, so when OCR reports one it misread 1 or 0.
+// A VIN never contains I, O or Q, so one of those in a read is always a
+// misread 1 or 0.
 const normalizeVinChars = (s) => s.replace(/[OQ]/g, "0").replace(/I/g, "1");
 
-function firstValidWindow(run) {
-  const s = normalizeVinChars(run);
-  for (let i = 0; i + 17 <= s.length; i++) {
-    const w = s.slice(i, i + 17);
-    if (isValidVin(w)) return w;
-  }
-  return null;
-}
+// Every checksum-valid VIN in the text, best first. A title or registration
+// barcode (often PDF417) encodes several fields as one string, and OCR runs
+// words together, so this looks inside long runs of letters/digits too, and
+// at VINs printed in groups after a "VIN" label ("1FM5K 8DH4H GB254 21").
+export function vinCandidates(text) {
+  const s = (text || "").toUpperCase();
+  const found = [];
+  const add = (v) => {
+    if (v && !found.includes(v)) found.push(v);
+  };
 
-// Look-alike pairs OCR swaps on printed documents.
-const OCR_SWAPS = { S: "5", 5: "S", B: "8", 8: "B", Z: "2", 2: "Z", G: "6", 6: "G", D: "0", 0: "D" };
-
-// Repairs a single misread character, accepted only when exactly one
-// repair satisfies the check digit — two would mean it's a guess.
-function repairOneChar(run) {
-  const s = normalizeVinChars(run);
-  const found = new Set();
-  for (let i = 0; i < 17; i++) {
-    const alt = OCR_SWAPS[s[i]];
-    if (!alt) continue;
-    const fixed = s.slice(0, i) + alt + s.slice(i + 1);
-    if (isValidVin(fixed)) found.add(fixed);
+  for (const run of s.match(/[A-Z0-9]{17,}/g) || []) {
+    const n = normalizeVinChars(run);
+    for (let i = 0; i + 17 <= n.length; i++) {
+      const w = n.slice(i, i + 17);
+      if (isValidVin(w)) add(w);
+    }
   }
-  return found.size === 1 ? [...found][0] : null;
+
+  for (const m of s.matchAll(/V\.?\s?[I1]\.?\s?N\.?[^A-Z0-9]{0,3}(?:NO\.?|NUMBER|#)?[^A-Z0-9]{0,3}([A-Z0-9][A-Z0-9 \-]{16,32})/g)) {
+    const joined = normalizeVinChars(m[1].replace(/[^A-Z0-9]/g, ""));
+    for (let i = 0; i + 17 <= joined.length; i++) {
+      const w = joined.slice(i, i + 17);
+      if (isValidVin(w)) add(w);
+    }
+  }
+  return found;
 }
 
 export function extractVin(text) {
-  const s = (text || "").toUpperCase();
-  if (isValidVin(s)) return s;
-
-  const runs = s.match(/[A-Z0-9]{17,}/g) || [];
-  for (const run of runs) {
-    const hit = firstValidWindow(run);
-    if (hit) return hit;
-  }
-
-  // Printed or OCR'd in groups ("1FM5K 8D83H GA123 45") after a VIN label.
-  const labelled = [];
-  for (const m of s.matchAll(/V\.?\s?[I1]\.?\s?N\.?[^A-Z0-9]{0,3}(?:NO\.?|NUMBER|#)?[^A-Z0-9]{0,3}([A-Z0-9][A-Z0-9 \-]{16,32})/g)) {
-    const joined = m[1].replace(/[^A-Z0-9]/g, "");
-    labelled.push(joined);
-    const hit = firstValidWindow(joined);
-    if (hit) return hit;
-  }
-
-  for (const run of [...runs.filter((r) => r.length === 17), ...labelled.map((l) => l.slice(0, 17))]) {
-    if (run.length === 17 && /[A-Z]/.test(run) && /[0-9]/.test(run)) {
-      const hit = repairOneChar(run);
-      if (hit) return hit;
-    }
-  }
-  return null;
+  return vinCandidates(text)[0] || null;
 }
 
 // Free, no-key NHTSA decoder — the same government VIN database dealer
 // software (ComSoft, DealerCenter, etc.) decodes against.
+//
+// `clean` is the one to trust for a VIN that was read off a photo: NHTSA
+// reports ErrorCode "0" only when the VIN decodes completely with a correct
+// check digit. A misread that happens to pass the check digit comes back
+// with no model and an error (one decoded as a "POLAR TANK TRAILER").
 export async function decodeVin(vin) {
   const res = await fetch(
     `https://vpic.nhtsa.dot.gov/api/vehicles/decodevinvalues/${encodeURIComponent(vin)}?format=json`
@@ -102,11 +86,13 @@ export async function decodeVin(vin) {
   const data = await res.json();
   const row = data.Results && data.Results[0];
   if (!row || !row.Make) throw new Error("No data found for that VIN");
+  const codes = String(row.ErrorCode || "").split(",").map((c) => c.trim()).filter(Boolean);
   return {
     year: row.ModelYear || "",
     make: row.Make || "",
     model: row.Model || "",
     trim: row.Trim || row.Series || "",
     bodyClass: row.BodyClass || "",
+    clean: codes.length > 0 && codes.every((c) => c === "0") && !!row.Model && !!row.ModelYear,
   };
 }

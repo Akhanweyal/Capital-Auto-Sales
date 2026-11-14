@@ -28,7 +28,7 @@ import {
 } from "./lib/db.js";
 import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv, todayLocal, num, SERVICE_CONTRACT_TAX_RATE } from "./lib/sales.js";
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
-import { extractTextFromDocument, parseAuctionText } from "./lib/auctionDoc.js";
+import { readVehicleDocument, imagesForAI, interpretAIReading } from "./lib/auctionDoc.js";
 import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
 import { logTestDrive, fetchTestDrives, markReturned, OPERATOR_TYPES } from "./lib/testDrives.js";
 
@@ -671,6 +671,12 @@ function CarPage({ car, ready, go }) {
                 {car.trim ? ` ${car.trim}` : ""}
               </dd>
             </div>
+            {car.color && (
+              <div>
+                <dt>Color</dt>
+                <dd>{car.color}</dd>
+              </div>
+            )}
             <div>
               <dt>Condition</dt>
               <dd>{car.condition}</dd>
@@ -887,7 +893,7 @@ function Admin({ go, say }) {
   const notify = useCallback((m) => {
     setToast(m);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setToast(null), 2800);
+    timer.current = setTimeout(() => setToast(null), 7000);
   }, []);
 
   useEffect(() => {
@@ -1338,6 +1344,7 @@ const BLANK = {
   make: "",
   model: "",
   trim: "",
+  color: "",
   price: "",
   mileage: "",
   condition: "Good",
@@ -1923,12 +1930,17 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [auctionImporting, setAuctionImporting] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [docPreview, setDocPreview] = useState("");
+  const [docReport, setDocReport] = useState(null); // { lines, file, category, canAI }
+  const [docProgress, setDocProgress] = useState("");
+  const [descMsg, setDescMsg] = useState("");
   const [docsRefreshToken, setDocsRefreshToken] = useState(0);
   const [printDoc, setPrintDoc] = usePrintDoc(); // null | 'buyersGuide' | 'notReady'
   const [suggestingDesc, setSuggestingDesc] = useState(false);
   const [pendingDocs, setPendingDocs] = useState([]);
   const docFileRef = useRef(null);
 
+  // Looks a VIN up and fills year/make/model/trim into whatever is still
+  // blank. Used by the typed VIN, the barcode scanner and "Decode VIN".
   const runDecode = async (vin) => {
     if (!isValidVinFormat(vin)) {
       notify("That doesn't look like a complete 17-character VIN.");
@@ -1950,9 +1962,14 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         fill("trim", info.trim);
         return next;
       });
-      notify(`Decoded: ${info.year} ${info.make} ${info.model}`.trim());
+      notify(
+        info.clean
+          ? `Decoded: ${info.year} ${info.make} ${info.model}`.trim()
+          : `${info.year} ${info.make} ${info.model}`.trim() +
+              " — but the VIN lookup reports problems with this VIN. Check every character against the car."
+      );
     } catch (e) {
-      notify("Couldn't decode that VIN. You can still fill the fields by hand.");
+      notify("Couldn't decode that VIN. Check each character, or fill the fields by hand.");
     }
     setDecoding(false);
     return decoded;
@@ -1964,74 +1981,138 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     runDecode(vin);
   };
 
-  // Reads a document (photo or PDF) and fills in whatever the form is still
-  // missing: VIN (then year/make/model from the VIN), mileage, and — for a
-  // state inspection receipt — the inspection check and date. `category` is
-  // what the document was filed as, when it came from the Documents list.
+  // Puts what a document said into the form — only into fields that are
+  // still blank, never over something already typed — and returns a plain
+  // list of what was found and what is still missing, shown under the button.
+  const applyReading = (info, category) => {
+    const lines = [];
+    const add = (ok, text) => lines.push({ ok, text });
+    const cur = (k) => String(v[k] || "").trim();
+    const currentVin = cur("vin").toUpperCase();
+
+    if (info.vin && currentVin && info.vin !== currentVin) {
+      add(false, `This document is for VIN ${info.vin}, but this car's VIN is ${currentVin}. Nothing was filled in.`);
+      return lines;
+    }
+
+    const patch = {};
+    if (info.vin) {
+      if (!currentVin) patch.vin = info.vin;
+      add(true, `VIN ${info.vin}${currentVin ? " (matches this car)" : ""}`);
+    } else if (info.vinRejected) {
+      add(false, `A VIN was read as ${info.vinRejected}, but it isn't a valid VIN for a real vehicle — probably a misread, so it was not used.`);
+    }
+
+    const veh = info.vehicle;
+    const fields = info.fields || {};
+    if (veh && (veh.make || veh.year)) {
+      for (const k of ["year", "make", "model", "trim"]) if (veh[k] && !cur(k)) patch[k] = veh[k];
+      add(true, `${veh.year} ${veh.make} ${veh.model}${veh.trim ? " " + veh.trim : ""} — from the VIN`);
+    } else if (fields.year || fields.make || fields.model) {
+      for (const k of ["year", "make", "model", "trim"]) if (fields[k] && !cur(k)) patch[k] = String(fields[k]);
+      add(true, `${[fields.year, fields.make, fields.model].filter(Boolean).join(" ")} — printed on the document, check it`);
+    }
+    if (fields.color && !cur("color")) {
+      patch.color = fields.color;
+      add(true, `Color: ${fields.color}`);
+    }
+    if (info.mileage && !cur("mileage")) {
+      patch.mileage = info.mileage;
+      add(true, `Mileage ${Number(info.mileage).toLocaleString()}`);
+    }
+
+    const inspection = category === "inspection" || info.isInspection || info.inspection;
+    const failed = info.rejected || info.inspection === "failed";
+    if (inspection && failed) {
+      add(false, "This looks like a rejected inspection, so the car was NOT marked as inspected.");
+    } else if (inspection) {
+      patch.safetyInspected = true;
+      if (info.date && !cur("safetyInspectedDate")) patch.safetyInspectedDate = info.date;
+      add(true, `Passed state inspection${info.date ? " " + info.date : ""}`);
+    }
+
+    setV((prev) => {
+      const next = { ...prev };
+      for (const [k, val] of Object.entries(patch)) {
+        if (k === "safetyInspected") next[k] = true;
+        else if (!String(prev[k] || "").trim()) next[k] = val;
+      }
+      return next;
+    });
+
+    const after = (k) => cur(k) || patch[k];
+    const missing = [
+      !after("vin") && "VIN",
+      !after("year") && "year",
+      !after("make") && "make",
+      !after("model") && "model",
+      !after("mileage") && "mileage",
+    ].filter(Boolean);
+    if (missing.length) add(false, `Still missing: ${missing.join(", ")}`);
+    return lines;
+  };
+
+  // Reads a document (photo or PDF) on this device and fills in whatever
+  // the form is still missing. `category` is what the file was filed as,
+  // when it came from the Documents list.
   const readDocument = async (file, category) => {
     setDocBusy(true);
     setDocPreview("");
+    setDocReport(null);
+    setDocProgress("Reading…");
     let info = null;
     try {
-      const text = await extractTextFromDocument(file);
-      info = parseAuctionText(text);
-      const got = [];
-      const current = (v.vin || "").trim().toUpperCase();
-
-      if (info.vin && current && current !== info.vin) {
-        notify(`That document is for VIN ${info.vin}, not this car's ${current}. Nothing was filled in.`);
-        setDocBusy(false);
-        return info;
-      }
-      if (info.mileage && !String(v.mileage || "").trim()) {
-        setV((prev) => (String(prev.mileage || "").trim() ? prev : { ...prev, mileage: info.mileage }));
-        got.push("mileage");
-      }
-      const inspection = category === "inspection" || info.isInspection;
-      if (inspection && !info.rejected) {
-        setV((prev) => ({
-          ...prev,
-          safetyInspected: true,
-          safetyInspectedDate: prev.safetyInspectedDate || info.date,
-        }));
-        got.push(info.date ? `inspection passed ${info.date}` : "inspection passed");
-      }
-      if (info.vin && !current) {
-        setV((prev) => ({ ...prev, vin: info.vin }));
-        got.unshift("VIN");
-      }
-      // Year, make, model and trim come from looking the VIN up, not from
-      // the page — so look it up whenever any of them is still blank, even
-      // if the VIN was already in the form before this document was added.
-      const vinKnown = info.vin || current;
-      let lookupFailed = false;
-      if (vinKnown && isValidVinFormat(vinKnown) && !(v.year && v.make && v.model)) {
-        const d = await runDecode(vinKnown);
-        if (d) got.push(`${d.year} ${d.make} ${d.model}`.trim());
-        else lookupFailed = true;
-      }
-
-      if (lookupFailed) {
-        notify(
-          (got.length ? `Filled in: ${got.join(", ")}. ` : "") +
-            "The year/make/model lookup didn't answer — press Decode VIN to try again."
-        );
-      } else if (got.length) {
-        notify(`Filled in from that document: ${got.join(", ")}. Check them before saving.`);
-      } else if (inspection && info.rejected) {
-        notify("That looks like a rejected inspection, so the car was not marked as inspected.");
-      } else if (!info.vin) {
-        // Showing what was actually read (not just "it failed") is what lets
-        // us tell bad OCR apart from a photo that's missing/cropping the VIN.
-        const snippet = text.replace(/\s+/g, " ").trim().slice(0, 300);
-        notify("Couldn't find a VIN or mileage in that document. You can still fill the fields by hand.");
-        setDocPreview(snippet || "(nothing readable came out of that file)");
-      }
+      info = await readVehicleDocument(file, { onProgress: setDocProgress });
+      const lines = applyReading(info, category);
+      const canAI = lines.some((l) => !l.ok && /Still missing: .*(VIN|year|make|model)/.test(l.text));
+      setDocReport({ lines, file, category, canAI });
+      // Showing what was actually read is what lets us tell bad OCR apart
+      // from a photo that's missing or cropping the VIN.
+      if (!info.vin) setDocPreview(info.text.slice(0, 300) || "(nothing readable came out of that file)");
     } catch (e) {
-      notify("Couldn't read that document. Try a clearer photo, or fill the fields by hand.");
+      setDocReport({
+        lines: [{ ok: false, text: "Couldn't read that file. Try a clearer, straight-on photo, or fill the fields by hand." }],
+        file,
+        category,
+        canAI: true,
+      });
     }
+    setDocProgress("");
     setDocBusy(false);
     return info;
+  };
+
+  // The photo is sent to an AI service only when this button is clicked.
+  const readWithAI = async () => {
+    if (!docReport || docBusy) return;
+    const { file, category } = docReport;
+    setDocBusy(true);
+    setDocProgress("Sending the document to the AI…");
+    try {
+      const images = await imagesForAI(file);
+      const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
+      const r = await fetch("/api/read-document", { method: "POST", headers, body: JSON.stringify({ images }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) {
+        setDocReport((prev) => ({
+          ...prev,
+          lines: [...prev.lines, { ok: false, text: data.error || "The AI reading didn't work. Try again, or fill the fields by hand." }],
+        }));
+      } else {
+        setDocProgress("Checking the VIN…");
+        const info = await interpretAIReading(data);
+        const lines = applyReading(info, category);
+        lines.push({ ok: true, text: `Read by AI${data.usedFallback ? " (Gemini)" : ""} — check each value against the car.` });
+        setDocReport({ lines, file, category, canAI: false });
+      }
+    } catch (e) {
+      setDocReport((prev) => ({
+        ...prev,
+        lines: [...prev.lines, { ok: false, text: "Couldn't reach the server. Check your connection and try again." }],
+      }));
+    }
+    setDocProgress("");
+    setDocBusy(false);
   };
 
   const importAuctionDoc = async (file) => {
@@ -2102,7 +2183,12 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   };
 
   const suggestDescription = async () => {
+    setDescMsg("");
     if (!v.year || !v.make || !v.model) {
+      const m =
+        "The description is written from the year, make and model, and some of those are blank. " +
+        'Fill them in above — "Fill from a document" or "Decode VIN" can do it from the VIN.';
+      setDescMsg(m);
       notify("Add year, make, and model first.");
       return;
     }
@@ -2131,10 +2217,14 @@ function CarForm({ car, onCancel, onSaved, notify }) {
             : "Description suggested — edit as you like before publishing."
         );
       } else {
-        notify(data.error || "Couldn't generate a description.");
+        const m = data.error || "Couldn't generate a description.";
+        setDescMsg(m);
+        notify(m);
       }
     } catch (e) {
-      notify("Couldn't reach the server. Check your connection.");
+      const m = "Couldn't reach the server. Check your connection.";
+      setDescMsg(m);
+      notify(m);
     }
     setSuggestingDesc(false);
   };
@@ -2234,6 +2324,12 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     };
     try {
       const saved = car ? await updateCar(car.id, payload) : await insertCar(payload);
+      if (saved.colorNotSaved) {
+        notify(
+          'Saved — but the color wasn\'t kept: the database is missing its "color" column. Run the one-line ' +
+            "update from supabase/schema.sql in the Supabase SQL Editor."
+        );
+      }
       try {
         await upsertCarCost(saved.id, { cost: Number(cost) || 0, expenses });
       } catch (e) {
@@ -2405,6 +2501,10 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           <input value={v.trim} onChange={set("trim")} placeholder="EX-L" />
         </label>
         <label>
+          <span>Color (optional)</span>
+          <input value={v.color || ""} onChange={set("color")} placeholder="White" />
+        </label>
+        <label>
           <span>Price</span>
           <input value={v.price} onChange={set("price")} inputMode="numeric" placeholder="14500" />
         </label>
@@ -2463,16 +2563,42 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           </div>
           <p className="scan-hint">
             Upload a photo or PDF of the auction invoice, condition report, title or inspection
-            receipt. The VIN, year, make, model, mileage and inspection date found in it fill in
-            below, and the file is kept in this car's documents. Price, trim and condition still
-            need you.
+            receipt. It is read on this device, and the VIN, year, make, model, mileage and
+            inspection date found in it fill in below. The file is kept in this car's documents.
+            Price and condition still need you.
           </p>
-          {docPreview && (
-            <p className="scan-hint warn">
-              What was read from that file: <em>"{docPreview}"</em>
-            </p>
-          )}
         </label>
+
+        {docProgress && <p className="scan-hint full">{docProgress}</p>}
+        {docReport && (
+          <div className="doc-report full">
+            <p className="micro gold">What was read from that document</p>
+            <ul>
+              {docReport.lines.map((l, i) => (
+                <li key={i} className={l.ok ? "ok" : "no"}>
+                  <b>{l.ok ? "✓" : "✗"}</b> {l.text}
+                </li>
+              ))}
+            </ul>
+            {docPreview && (
+              <p className="scan-hint">
+                What the reader saw: <em>"{docPreview}"</em>
+              </p>
+            )}
+            {docReport.canAI && (
+              <>
+                <button type="button" className="mini" disabled={docBusy} onClick={readWithAI}>
+                  {docBusy ? "Reading…" : "🤖 Read with AI instead"}
+                </button>
+                <p className="scan-hint">
+                  Reading a photo on this device is hit-or-miss. This sends the picture to an AI service
+                  (Google Gemini, or Claude if it is set up) to read it. It is only sent when you click
+                  this.
+                </p>
+              </>
+            )}
+          </div>
+        )}
         <label className="full">
           <span>Short description</span>
           <textarea
@@ -2490,6 +2616,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           >
             {suggestingDesc ? "Writing…" : "✨ Suggest description"}
           </button>
+          {descMsg && <p className="scan-hint warn">{descMsg}</p>}
         </label>
         <label className="check full">
           <input type="checkbox" checked={!!v.featured} onChange={set("featured")} />
@@ -3015,7 +3142,16 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     setS((prev) => ({
       ...prev,
       car_id: car.id,
-      vehicle: { ...prev.vehicle, year: car.year, make: car.make, model: car.model, trim: car.trim || "", vin: car.vin || "", mileage: car.mileage },
+      vehicle: {
+        ...prev.vehicle,
+        year: car.year,
+        make: car.make,
+        model: car.model,
+        trim: car.trim || "",
+        color1: car.color || prev.vehicle.color1 || "",
+        vin: car.vin || "",
+        mileage: car.mileage,
+      },
       vehicle_price: car.price,
       // Freeze the car's current disclosed warranty terms onto this sale —
       // if the terms change later for the next buyer, this sale keeps what
