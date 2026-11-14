@@ -22,6 +22,20 @@ async function extractTextFromPdf(file) {
     const content = await page.getTextContent();
     text += content.items.map((it) => it.str || "").join(" ") + "\n";
   }
+  if (text.replace(/\s/g, "").length >= 40) return text;
+
+  // A scanned PDF is just pictures of pages — no text to pull out — so
+  // draw the first few pages and read those the way a photo is read.
+  for (let i = 1; i <= Math.min(doc.numPages, 3); i++) {
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (blob) text += (await extractTextFromImage(blob)) + "\n";
+  }
   return text;
 }
 
@@ -125,7 +139,15 @@ async function extractTextFromImage(file) {
       // original photo rather than failing the whole import.
     }
     const { data } = await worker.recognize(input);
-    return data.text || "";
+    let text = data.text || "";
+    // Black-and-white conversion helps on security paper but can wipe out
+    // text in a shadowed or unevenly lit photo. If the first read found no
+    // VIN, read the untouched photo too and keep both.
+    if (input !== file && !extractVin(text)) {
+      const second = await worker.recognize(file);
+      text += "\n" + (second.data.text || "");
+    }
+    return text;
   } finally {
     await worker.terminate();
   }
@@ -143,17 +165,45 @@ export async function extractTextFromDocument(file) {
 // put the label right before the number, so this is deliberately narrow
 // rather than grabbing the first big number on the page (which just as often
 // is a lot number, a price, or a phone number).
-const MILES_RE = /\b(?:odometer|mileage|miles?)\b[^\d]{0,12}([\d,]{4,7})\b/i;
+const MILES_RE = /\b(?:odometer|odom|mileage|miles?)\b[^\d]{0,24}([\d,]{4,7})\b/i;
+const MILES_AFTER_RE = /\b(\d{1,3},\d{3}|\d{4,6})\s*(?:mi\b|miles\b)/i;
+
+const pad = (n) => String(n).padStart(2, "0");
+
+// The most recent date on the page that isn't in the future or over a year
+// old — on an inspection receipt that's the inspection date, not the
+// sticker's expiry (future) or the vehicle's model year.
+function recentDate(text) {
+  const now = Date.now();
+  let best = null;
+  for (const m of text.matchAll(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4}|\d{2})\b/g)) {
+    const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    const d = new Date(year, Number(m[1]) - 1, Number(m[2]));
+    if (d.getMonth() !== Number(m[1]) - 1) continue;
+    const age = now - d.getTime();
+    if (age < 0 || age > 370 * 86400000) continue;
+    if (!best || d > best) best = d;
+  }
+  return best ? `${best.getFullYear()}-${pad(best.getMonth() + 1)}-${pad(best.getDate())}` : "";
+}
 
 export function parseAuctionText(text) {
   const vin = extractVin(text);
 
   let mileage = "";
-  const m = text.match(MILES_RE);
+  const m = text.match(MILES_RE) || text.match(MILES_AFTER_RE);
   if (m) {
     const n = Number(m[1].replace(/,/g, ""));
     if (n >= 50 && n <= 500000) mileage = String(n);
   }
 
-  return { vin, mileage };
+  // Narrow on purpose: a repair invoice that says "inspected brakes" is not
+  // a state inspection receipt.
+  const isInspection =
+    /safety\s+inspection|inspection\s+(?:station|sticker|certificate|receipt|report)|approval\s+sticker/i.test(text);
+  // A rejection receipt is an inspection document too, and must never
+  // count as a pass.
+  const rejected = /reject|fail/i.test(text);
+
+  return { vin, mileage, isInspection, rejected, date: recentDate(text) };
 }

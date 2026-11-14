@@ -952,6 +952,19 @@ function Admin({ go, say }) {
 
   const newLeads = leads.filter((l) => !l.handled).length;
 
+  // An open car or sale form covers the tabs' content, so leaving it has to
+  // close it — after asking, since anything unsaved goes with it.
+  const leaveForm = () => {
+    if (!editing && !editingSale) return true;
+    if (!window.confirm("Leave this form? Anything you haven't saved will be lost.")) return false;
+    setEditing(null);
+    setEditingSale(null);
+    return true;
+  };
+  const openTab = (t) => {
+    if (leaveForm()) setTab(t);
+  };
+
   const patch = async (car, changes) => {
     try {
       const saved = await updateCar(car.id, changes);
@@ -993,6 +1006,7 @@ function Admin({ go, say }) {
             <button
               className="btn btn-gold"
               onClick={() => {
+                if (!leaveForm()) return;
                 setEditing("new");
                 setTab("inventory");
               }}
@@ -1002,20 +1016,20 @@ function Admin({ go, say }) {
           </div>
         </div>
         <div className="wrap tabs">
-          <button className={tab === "inventory" ? "on" : ""} onClick={() => setTab("inventory")}>
+          <button className={tab === "inventory" ? "on" : ""} onClick={() => openTab("inventory")}>
             Inventory <span className="count">{cars.length}</span>
           </button>
-          <button className={tab === "leads" ? "on" : ""} onClick={() => setTab("leads")}>
+          <button className={tab === "leads" ? "on" : ""} onClick={() => openTab("leads")}>
             Customer requests {newLeads > 0 && <span className="count hot">{newLeads}</span>}
           </button>
-          <button className={tab === "sales" ? "on" : ""} onClick={() => setTab("sales")}>
+          <button className={tab === "sales" ? "on" : ""} onClick={() => openTab("sales")}>
             Sales <span className="count">{sales.length}</span>
           </button>
-          <button className={tab === "documents" ? "on" : ""} onClick={() => setTab("documents")}>
+          <button className={tab === "documents" ? "on" : ""} onClick={() => openTab("documents")}>
             Documents
           </button>
           {profile && profile.role === "admin" && (
-            <button className={tab === "team" ? "on" : ""} onClick={() => setTab("team")}>
+            <button className={tab === "team" ? "on" : ""} onClick={() => openTab("team")}>
               Team
             </button>
           )}
@@ -1541,6 +1555,7 @@ function DocumentsPanel({
   refreshToken,
   pendingDocs,
   onPendingChange,
+  onFileAdded,
 }) {
   // A brand-new, unsaved car/sale has no id yet, so there's nowhere to
   // attach a document row to. Rather than blocking upload until after save
@@ -1578,6 +1593,7 @@ function DocumentsPanel({
     if (pendingMode) {
       onPendingChange((prev) => [...prev, { tempId: `${Date.now()}-${Math.random()}`, file, category, label }]);
       setLabel("");
+      if (onFileAdded) onFileAdded(file, category);
       return;
     }
     setBusy(true);
@@ -1586,6 +1602,7 @@ function DocumentsPanel({
       setDocs((d) => [doc, ...d]);
       setLabel("");
       notify("Document saved.");
+      if (onFileAdded) onFileAdded(file, category);
     } catch (e) {
       notify("Couldn't save that document. Try again.");
     }
@@ -1944,51 +1961,88 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     runDecode(vin);
   };
 
-  const importAuctionDoc = async (file) => {
+  // Reads a document (photo or PDF) and fills in whatever the form is still
+  // missing: VIN (then year/make/model from the VIN), mileage, and — for a
+  // state inspection receipt — the inspection check and date. `category` is
+  // what the document was filed as, when it came from the Documents list.
+  const readDocument = async (file, category) => {
     setDocBusy(true);
     setDocPreview("");
+    let info = null;
     try {
       const text = await extractTextFromDocument(file);
-      const { vin, mileage } = parseAuctionText(text);
-      if (mileage) setV((prev) => (prev.mileage ? prev : { ...prev, mileage }));
-      if (vin) {
-        setV((prev) => ({ ...prev, vin }));
-        await runDecode(vin);
-      } else {
+      info = parseAuctionText(text);
+      const got = [];
+      const current = (v.vin || "").trim().toUpperCase();
+
+      if (info.vin && current && current !== info.vin) {
+        notify(`That document is for VIN ${info.vin}, not this car's ${current}. Nothing was filled in.`);
+        setDocBusy(false);
+        return info;
+      }
+      if (info.mileage && !String(v.mileage || "").trim()) {
+        setV((prev) => (String(prev.mileage || "").trim() ? prev : { ...prev, mileage: info.mileage }));
+        got.push("mileage");
+      }
+      const inspection = category === "inspection" || info.isInspection;
+      if (inspection && !info.rejected) {
+        setV((prev) => ({
+          ...prev,
+          safetyInspected: true,
+          safetyInspectedDate: prev.safetyInspectedDate || info.date,
+        }));
+        got.push(info.date ? `inspection passed ${info.date}` : "inspection passed");
+      }
+      if (info.vin && !current) {
+        setV((prev) => ({ ...prev, vin: info.vin }));
+        await runDecode(info.vin);
+        got.unshift("VIN, year, make and model");
+      }
+
+      if (got.length) {
+        notify(`Filled in from that document: ${got.join(", ")}. Check them before saving.`);
+      } else if (inspection && info.rejected) {
+        notify("That looks like a rejected inspection, so the car was not marked as inspected.");
+      } else if (!info.vin) {
         // Showing what was actually read (not just "it failed") is what lets
         // us tell bad OCR apart from a photo that's missing/cropping the VIN.
         const snippet = text.replace(/\s+/g, " ").trim().slice(0, 300);
-        notify("Couldn't find a VIN in that document. You can still fill the fields by hand.");
+        notify("Couldn't find a VIN or mileage in that document. You can still fill the fields by hand.");
         setDocPreview(snippet || "(nothing readable came out of that file)");
-      }
-      // Archive the original file, not just the data pulled from it — a
-      // dealer-board inquiry wants the actual document, not just the VIN it
-      // decoded to. If this car already has an id, save it right away;
-      // otherwise queue it the same way a manually-attached document on a
-      // new car queues, and it gets uploaded once the car is actually saved.
-      if (car && car.id) {
-        try {
-          await uploadDocument(file, {
-            carId: car.id,
-            category: "intake",
-            label: "Auction purchase document",
-            vin: vin || v.vin || "",
-            vehicle: `${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim(),
-          });
-          setDocsRefreshToken((k) => k + 1);
-        } catch (e) {
-          notify("Filled the form, but couldn't save a copy of the document.");
-        }
-      } else {
-        setPendingDocs((prev) => [
-          ...prev,
-          { tempId: `${Date.now()}-${Math.random()}`, file, category: "intake", label: "Auction purchase document" },
-        ]);
       }
     } catch (e) {
       notify("Couldn't read that document. Try a clearer photo, or fill the fields by hand.");
     }
     setDocBusy(false);
+    return info;
+  };
+
+  const importAuctionDoc = async (file) => {
+    const info = await readDocument(file);
+    const inspection = !!(info && info.isInspection);
+    const meta = {
+      category: inspection ? "inspection" : "intake",
+      label: inspection ? "Safety inspection" : "Purchase document",
+    };
+    // Archive the original file, not just the data pulled from it — a
+    // dealer-board inquiry wants the actual document. If this car already
+    // has an id, save it right away; otherwise queue it, and it gets
+    // uploaded once the car is saved.
+    if (car && car.id) {
+      try {
+        await uploadDocument(file, {
+          carId: car.id,
+          ...meta,
+          vin: (info && info.vin) || v.vin || "",
+          vehicle: `${v.year || ""} ${v.make || ""} ${v.model || ""}`.trim(),
+        });
+        setDocsRefreshToken((k) => k + 1);
+      } catch (e) {
+        notify("Filled the form, but couldn't save a copy of the document.");
+      }
+    } else {
+      setPendingDocs((prev) => [...prev, { tempId: `${Date.now()}-${Math.random()}`, file, ...meta }]);
+    }
   };
 
   useEffect(() => {
@@ -2376,7 +2430,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
               disabled={docBusy}
               onClick={() => docFileRef.current && docFileRef.current.click()}
             >
-              {docBusy ? "Reading…" : "📄 Import purchase doc"}
+              {docBusy ? "Reading…" : "📄 Fill from a document"}
             </button>
             <input
               ref={docFileRef}
@@ -2391,8 +2445,10 @@ function CarForm({ car, onCancel, onSaved, notify }) {
             />
           </div>
           <p className="scan-hint">
-            Upload the condition report/invoice ACV (or any auction) gave you for this win — a
-            VIN found in it decodes automatically, same as scanning the barcode.
+            Upload a photo or PDF of the auction invoice, condition report, title or inspection
+            receipt. The VIN, year, make, model, mileage and inspection date found in it fill in
+            below, and the file is kept in this car's documents. Price, trim and condition still
+            need you.
           </p>
           {docPreview && (
             <p className="scan-hint warn">
@@ -2529,6 +2585,9 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           refreshToken={docsRefreshToken}
           pendingDocs={pendingDocs}
           onPendingChange={setPendingDocs}
+          onFileAdded={(file, category) => {
+            if (category !== "repair" && category !== "sale") readDocument(file, category);
+          }}
         />
       </div>
 

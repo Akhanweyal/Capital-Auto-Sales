@@ -4,6 +4,7 @@ const BUCKET = "car-documents";
 
 export const DOC_CATEGORIES = [
   { value: "intake", label: "Intake (purchase / title)" },
+  { value: "inspection", label: "Safety inspection" },
   { value: "repair", label: "Repair / recon" },
   { value: "sale", label: "Sale / buyer's order" },
   { value: "other", label: "Other" },

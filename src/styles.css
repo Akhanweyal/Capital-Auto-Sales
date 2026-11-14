@@ -266,6 +266,7 @@ button{font:inherit;cursor:pointer}
   padding:3px 8px;border-radius:2px;background:var(--paper);color:var(--navy-700);border:1px solid var(--line)}
 .doc-intake{background:#EAF3EC;color:#1F6B3A;border-color:#1F6B3A}
 .doc-repair{background:#FBF1E0;color:#8A5A0A;border-color:#8A5A0A}
+.doc-inspection{background:#EDE9F7;color:#4B2E8A;border-color:#4B2E8A}
 .doc-sale{background:#E9EEF8;color:#1F3C8A;border-color:#1F3C8A}
 .doc-name{flex:1;font-size:14px;min-width:160px}
 .doc-name em{color:var(--muted);font-style:normal}
