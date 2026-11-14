@@ -84,6 +84,13 @@ function timeAgo(ts) {
 }
 const title = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}`.trim();
 
+// The link to post on social media. X and Facebook keep the preview (photo,
+// title, price) they first saw for a link for days, so a link first shared
+// before the photos were added keeps showing no picture. A version number
+// that changes whenever the listing is edited makes the edited listing a new
+// link to them, and a fresh preview. The page itself ignores it.
+const shareLink = (c) => `${window.location.origin}/car/${c.id}?v=${c.updatedAt || c.createdAt || 1}`;
+
 // Renders children into a dedicated node appended directly to <body>,
 // completely outside #root. Printable documents (buyer's order, buyer's
 // guide, lot tag) all use this: the old approach hid the rest of the page
@@ -730,7 +737,7 @@ function CarPage({ car, ready, go }) {
    so the shared link renders a proper preview card with photo/price/title. */
 function ShareButtons({ car }) {
   const [copied, setCopied] = useState(false);
-  const url = `${window.location.origin}/car/${car.id}`;
+  const url = shareLink(car);
   const text = `${title(car)} — ${money(car.price)} at ${DEALER.name}`;
 
   const copyLink = async () => {
@@ -1357,7 +1364,16 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
                 <button
                   className="mini"
                   onClick={async () => {
-                    const url = `${window.location.origin}/car/${c.id}`;
+                    if (
+                      !c.cover &&
+                      !window.confirm(
+                        "This car has no photos yet, so the post will have no picture — and X and Facebook " +
+                          "remember a link's preview for days. Add photos first, or share anyway?"
+                      )
+                    ) {
+                      return;
+                    }
+                    const url = shareLink(c);
                     if (navigator.share) {
                       navigator.share({ title: title(c), url }).catch(() => {});
                     } else {
