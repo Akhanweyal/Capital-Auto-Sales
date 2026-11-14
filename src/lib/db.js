@@ -145,12 +145,49 @@ export async function updateCar(id, patch) {
     row.photos = patch.photos;
     row.cover_url = patch.photos[0] ? patch.photos[0].url : "";
   }
+  if (!Object.keys(row).length) {
+    // Nothing to change — an empty update is an error, so just return the car.
+    const { data, error } = await supabase.from("cars").select("*").eq("id", id).single();
+    if (error) throw error;
+    return fromRow(data);
+  }
   const { data, error, colorNotSaved } = await writeCar(
     (r) => supabase.from("cars").update(r).eq("id", id).select().single(),
     row
   );
   if (error) throw error;
   return { ...fromRow(data), colorNotSaved: !!colorNotSaved };
+}
+
+/* ---------- photos on a saved car ----------
+   Photos are saved to the car the moment they upload, so a draft started on
+   one device can be finished from another (phone photos added to a draft
+   made on the computer). Each change re-reads the car's current photo list
+   first and applies only its own change to it, so photos added from another
+   device in the meantime aren't wiped out. */
+async function currentPhotos(id) {
+  const { data, error } = await supabase.from("cars").select("photos").eq("id", id).single();
+  if (error) throw error;
+  return Array.isArray(data.photos) ? data.photos : [];
+}
+const photoKey = (p) => (p && (p.path || p.url)) || "";
+
+export async function addCarPhotos(id, shots) {
+  const latest = await currentPhotos(id);
+  const have = new Set(latest.map(photoKey));
+  const merged = [...latest, ...shots.filter((s) => !have.has(photoKey(s)))];
+  await updateCar(id, { photos: merged });
+  return merged;
+}
+
+export async function removeCarPhoto(id, shot) {
+  const merged = (await currentPhotos(id)).filter((p) => photoKey(p) !== photoKey(shot));
+  await updateCar(id, { photos: merged });
+  return merged;
+}
+
+export async function setCarPhotoOrder(id, ordered) {
+  await updateCar(id, { photos: ordered });
 }
 
 export async function deleteCar(car) {

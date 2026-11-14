@@ -10,6 +10,9 @@ import {
   deleteCar,
   uploadPhoto,
   removePhotos,
+  addCarPhotos,
+  removeCarPhoto,
+  setCarPhotoOrder,
   createLead,
   fetchLeads,
   updateLead,
@@ -930,6 +933,25 @@ function Admin({ go, say }) {
     profileRef.current = profile;
   }, [profile]);
 
+  // Live updates ride on Supabase Realtime, which can be switched off or drop
+  // on a phone that was asleep. So also refresh when the app is brought back
+  // to the front, and every 30 seconds while it is open — a draft started on
+  // another device always shows up.
+  useEffect(() => {
+    if (!session) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") reload();
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    const timer = setInterval(refresh, 30000);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      clearInterval(timer);
+    };
+  }, [session, reload]);
+
   useEffect(() => {
     if (!session) return;
     let debounceTimer = null;
@@ -1046,9 +1068,16 @@ function Admin({ go, say }) {
         {editing && (
           <CarForm
             car={editing === "new" ? null : editing}
+            cars={cars}
             onCancel={() => setEditing(null)}
             onSaved={(saved, isNew) => {
-              setCars((cs) => (isNew ? [saved, ...cs] : cs.map((c) => (c.id === saved.id ? saved : c))));
+              // The live refresh can already have added a brand-new car by the
+              // time the save finishes, so replace by id rather than prepend.
+              setCars((cs) =>
+                cs.some((c) => c.id === saved.id)
+                  ? cs.map((c) => (c.id === saved.id ? saved : c))
+                  : [saved, ...cs]
+              );
               setEditing(null);
               notify(isNew ? (saved.published ? "Car published." : "Saved as a draft.") : "Changes saved.");
             }}
@@ -1261,7 +1290,7 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
             <div className="row-main">
               <h3>{title(c)}</h3>
               <p className="row-meta">
-                {money(c.price)} · {miles(c.mileage)} mi · {c.condition}
+                {c.price ? money(c.price) : "No price yet"} · {miles(c.mileage)} mi · {c.condition}
                 {c.vin ? ` · VIN ${c.vin}` : ""}
                 {c.updatedBy && ` · updated by ${c.updatedBy} ${timeAgo(c.updatedAt)}`}
               </p>
@@ -1932,7 +1961,7 @@ function TestDrivePanel({ carId, vin, vehicle, notify }) {
   );
 }
 
-function CarForm({ car, onCancel, onSaved, notify }) {
+function CarForm({ car, cars = [], onCancel, onSaved, notify }) {
   const [v, setV] = useState(car ? { ...BLANK, ...car } : BLANK);
   const [photos, setPhotos] = useState(car ? car.photos : []);
   const [cost, setCost] = useState("");
@@ -1960,6 +1989,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const [suggestingDesc, setSuggestingDesc] = useState(false);
   const [pendingDocs, setPendingDocs] = useState([]);
   const docFileRef = useRef(null);
+  const savingRef = useRef(false);
 
   // Looks a VIN up and fills year/make/model/trim into whatever is still
   // blank. Used by the typed VIN, the barcode scanner and "Decode VIN".
@@ -2180,6 +2210,23 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const set = (k) => (e) =>
     setV({ ...v, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
 
+  // A car that is already saved keeps its photos the moment they upload — so
+  // photos added from a phone land on the draft started on the computer, and
+  // nothing is lost if the form is closed without pressing Save. A brand-new
+  // car has no record yet, so its photos wait for the first Save.
+  const keepPhotos = async (shots) => {
+    if (!car || !car.id) {
+      setPhotos((p) => [...p, ...shots]);
+      return;
+    }
+    try {
+      setPhotos(await addCarPhotos(car.id, shots));
+    } catch (e) {
+      setPhotos((p) => [...p, ...shots]);
+      notify("The photo uploaded but couldn't be saved to the car yet — press Save to keep it.");
+    }
+  };
+
   const addFiles = async (files) => {
     const list = Array.from(files)
       .filter((f) => f.type.startsWith("image/"))
@@ -2190,7 +2237,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       try {
         const blob = await shrink(f);
         const shot = await uploadPhoto(blob);
-        setPhotos((p) => [...p, shot]);
+        await keepPhotos([shot]);
       } catch (e) {
         notify("A photo didn't upload. Try again.");
       }
@@ -2297,7 +2344,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
           failed++;
           continue;
         }
-        setPhotos((p) => [...p, { url: data.url, path: data.path }]);
+        await keepPhotos([{ url: data.url, path: data.path }]);
       } catch (e) {
         failed++;
       }
@@ -2312,6 +2359,13 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const dropPhoto = async (n) => {
     const gone = photos[n];
     setPhotos(photos.filter((_, k) => k !== n));
+    if (car && car.id) {
+      try {
+        setPhotos(await removeCarPhoto(car.id, gone));
+      } catch (e) {
+        notify("Couldn't remove that photo from the car. Press Save to keep the change.");
+      }
+    }
     removePhotos([gone]).catch(() => {});
   };
 
@@ -2321,13 +2375,25 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     const [x] = next.splice(from, 1);
     next.splice(to, 0, x);
     setPhotos(next);
+    if (car && car.id) setCarPhotoOrder(car.id, next).catch(() => {});
   };
 
   const save = async (publish) => {
-    if (!v.year || !v.make || !v.model || v.price === "" || v.mileage === "") {
-      setErr("Fill in year, make, model, price and mileage.");
+    if (savingRef.current) return; // a second tap while the first is still saving
+    if (!v.year || !v.make || !v.model) {
+      setErr("Fill in year, make and model.");
       return;
     }
+    if (publish && (v.price === "" || v.mileage === "")) {
+      setErr("To publish, also fill in the price and mileage — or save it as a draft and finish later.");
+      return;
+    }
+    const vinNow = (v.vin || "").trim().toUpperCase();
+    if (!car && vinNow) {
+      const dupe = cars.find((c) => (c.vin || "").toUpperCase() === vinNow);
+      if (dupe && !window.confirm(`There is already a ${title(dupe)} with this VIN in your inventory. Add it again?`)) return;
+    }
+    savingRef.current = true;
     setErr("");
     setBusy(true);
     const payload = {
@@ -2344,8 +2410,17 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       sold: car ? car.sold : false,
       photos,
     };
+    // For a car that already exists, send only what this device changed, so
+    // saving here doesn't overwrite something edited on another device.
+    let toSend = payload;
+    if (car) {
+      toSend = {};
+      for (const k of Object.keys(payload)) {
+        if (JSON.stringify(payload[k]) !== JSON.stringify(car[k])) toSend[k] = payload[k];
+      }
+    }
     try {
-      const saved = car ? await updateCar(car.id, payload) : await insertCar(payload);
+      const saved = car ? await updateCar(car.id, toSend) : await insertCar(payload);
       if (saved.colorNotSaved) {
         notify(
           'Saved — but the color wasn\'t kept: the database is missing its "color" column. Run the one-line ' +
@@ -2379,6 +2454,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
     } catch (e) {
       setErr("That didn't save. Check your connection and try again.");
     }
+    savingRef.current = false;
     setBusy(false);
   };
 
@@ -2426,7 +2502,8 @@ function CarForm({ car, onCancel, onSaved, notify }) {
         <p className="drop-sub">
           {uploading > 0
             ? `Uploading ${uploading} more…`
-            : `First photo is the one customers see in the grid. Up to 15 — ${photos.length} added.`}
+            : `First photo is the one customers see in the grid. Up to 15 — ${photos.length} added.` +
+              (car ? " Photos save to this car as soon as they upload." : " Tip: save as a draft first, then add photos from your phone.")}
         </p>
       </div>
 
