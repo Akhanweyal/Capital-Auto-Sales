@@ -8,7 +8,7 @@
 // GEMINI_API_KEY alone both still work, just without the fallback.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
+import { geminiGenerate, isBusyError } from "./_lib/gemini.js";
 import { requireUser } from "./_lib/auctionShared.js";
 
 const SYSTEM_PROMPT =
@@ -20,17 +20,6 @@ const SYSTEM_PROMPT =
   "a person first. Don't repeat the same term more than once just to pack it in. Don't invent " +
   "features, history, or condition details that weren't given to you. Don't use a salesy opening " +
   "like 'Introducing' or 'Check out'.";
-
-// Free-tier keys hit real rate/quota limits in normal use (unlike a paid
-// Claude key), so it's worth telling the admin *why* it failed rather than
-// a flat "try again" — "you're rate-limited, wait a bit" is a different fix
-// than "the key is wrong".
-function isQuotaError(e) {
-  const status = e && (e.status || e.statusCode);
-  if (status === 429) return true;
-  const msg = (e && e.message) || "";
-  return /quota|rate.?limit|resource_exhausted/i.test(msg);
-}
 
 // Pulls the most useful bit out of an SDK error for logging/display — the
 // status code plus whatever message the API actually sent back, not just
@@ -61,9 +50,7 @@ async function tryClaude(facts) {
 
 async function tryGemini(facts) {
   if (!process.env.GEMINI_API_KEY) return null;
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
-    model: "gemini-3.8-flash",
+  const response = await geminiGenerate({
     contents: `Write a listing description for: ${facts}`,
     config: {
       systemInstruction: SYSTEM_PROMPT,
@@ -132,11 +119,13 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (geminiError && isQuotaError(geminiError)) {
+  // Every Gemini model was busy or rate-limited — tell the admin that, since
+  // "wait a minute" is a different fix than "the key is wrong".
+  if (geminiError && isBusyError(geminiError)) {
     res.status(200).json({
       error: claudeError
-        ? "Claude failed and Gemini's free tier is rate-limited right now — wait a minute and try again."
-        : "Gemini's free tier is rate-limited right now — wait a minute and try again.",
+        ? "Claude failed and Google's free AI is overloaded right now — try again in a minute or two."
+        : "Google's free AI is overloaded right now (all of its models) — try again in a minute or two.",
     });
     return;
   }

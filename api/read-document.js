@@ -8,7 +8,7 @@
 // Gemini's free tier (GEMINI_API_KEY), like api/suggest-description.js.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
+import { geminiGenerate } from "./_lib/gemini.js";
 import { requireUser } from "./_lib/auctionShared.js";
 
 const SYSTEM_PROMPT =
@@ -66,9 +66,7 @@ async function tryClaude(images) {
 
 async function tryGemini(images) {
   if (!process.env.GEMINI_API_KEY) return null;
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
-    model: "gemini-3.8-flash",
+  const response = await geminiGenerate({
     contents: [
       {
         role: "user",
