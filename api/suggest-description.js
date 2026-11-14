@@ -8,7 +8,9 @@
 // GEMINI_API_KEY alone both still work, just without the fallback.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { Type } from "@google/genai";
 import { geminiGenerate, isBusyError } from "./_lib/gemini.js";
+import { extractDescription, looksLikeDescription } from "./_lib/descriptionText.js";
 import { requireUser } from "./_lib/auctionShared.js";
 
 const SYSTEM_PROMPT =
@@ -48,16 +50,32 @@ async function tryClaude(facts) {
   return text ? text.text.trim() : null;
 }
 
+// Gemini is asked for a structured answer with a single field that holds only
+// the finished text, given plenty of room (a model's hidden thinking counts
+// against the output limit), and an answer that still reads like scratch-work
+// is rejected so the next model is tried.
 async function tryGemini(facts) {
   if (!process.env.GEMINI_API_KEY) return null;
-  const response = await geminiGenerate({
-    contents: `Write a listing description for: ${facts}`,
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      maxOutputTokens: 400,
+  const response = await geminiGenerate(
+    {
+      contents:
+        `Write a listing description for: ${facts}. ` +
+        'Reply as JSON with one field, "description", containing only the finished listing text.',
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        maxOutputTokens: 2000,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: { description: { type: Type.STRING } },
+          required: ["description"],
+        },
+      },
     },
-  });
-  return response.text ? response.text.trim() : null;
+    undefined,
+    (r) => looksLikeDescription(extractDescription(r.text))
+  );
+  return extractDescription(response.text);
 }
 
 export default async function handler(req, res) {
@@ -116,6 +134,11 @@ export default async function handler(req, res) {
 
   if (description) {
     res.status(200).json({ description, usedFallback });
+    return;
+  }
+
+  if (geminiError && geminiError.unusable) {
+    res.status(200).json({ error: "The AI wrote something that wasn't a proper description — click Suggest description again." });
     return;
   }
 
