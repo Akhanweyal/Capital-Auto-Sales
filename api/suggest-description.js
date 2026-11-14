@@ -10,18 +10,22 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { Type } from "@google/genai";
 import { geminiGenerate, isBusyError } from "./_lib/gemini.js";
-import { extractDescription, looksLikeDescription } from "./_lib/descriptionText.js";
+import { buildFacts, extractDescription, looksLikeDescription } from "./_lib/descriptionText.js";
 import { requireUser } from "./_lib/auctionShared.js";
 
 const SYSTEM_PROMPT =
   "You write short used-car listing descriptions for a dealership website. 2-4 sentences, " +
   "plain text only (no markdown, no quotes around it, no emoji). Work the year, make, model, trim, " +
-  "mileage, condition, and city/location naturally into the sentences — the way a real listing " +
-  "reads, not a list of specs and not keyword-stuffed — since those are the exact terms shoppers " +
-  "type into Google ('used 2018 honda accord for sale in henrico va'), and it has to read well for " +
-  "a person first. Don't repeat the same term more than once just to pack it in. Don't invent " +
-  "features, history, or condition details that weren't given to you. Don't use a salesy opening " +
-  "like 'Introducing' or 'Check out'.";
+  "mileage and condition naturally into the sentences — the way a real listing reads, not a list " +
+  "of specs and not keyword-stuffed — since those are the exact terms shoppers type into Google " +
+  "('used 2018 honda accord for sale in henrico va'), and it has to read well for a person first. " +
+  "Finish with one short invitation to see the car in person that names the dealership and gives " +
+  "its street address, city and ZIP code exactly as provided, for example: 'Stop by Capital Auto " +
+  "Sales at 8607 Oakview Ave, Henrico, VA 23228 to see it in person.' That address is where the " +
+  "car is — never write that the car suits 'drivers in the area' or 'drivers in Henrico'. Don't " +
+  "repeat the same term more than once just to pack it in. Don't invent features, history, or " +
+  "condition details that weren't given to you. Don't use a salesy opening like 'Introducing' or " +
+  "'Check out'.";
 
 // Pulls the most useful bit out of an SDK error for logging/display — the
 // status code plus whatever message the API actually sent back, not just
@@ -97,20 +101,13 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { year, make, model, trim, mileage, condition, city } = req.body || {};
+  const { year, make, model } = req.body || {};
   if (!year || !make || !model) {
     res.status(400).json({ error: "Need at least year, make, and model." });
     return;
   }
 
-  const facts = [
-    `${year} ${make} ${model}${trim ? " " + trim : ""}`,
-    mileage ? `${Number(mileage).toLocaleString()} miles` : null,
-    condition ? `condition: ${condition}` : null,
-    city ? `located in ${city}` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  const facts = buildFacts(req.body);
 
   let description = null;
   let usedFallback = false;

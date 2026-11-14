@@ -2291,7 +2291,7 @@ function CarForm({ car, cars = [], onCancel, onSaved, notify }) {
           trim: v.trim,
           mileage: v.mileage,
           condition: v.condition,
-          city: DEALER.city,
+          dealer: { name: DEALER.name, address: DEALER.address, city: DEALER.city },
         }),
       });
       const data = await r.json();
