@@ -1932,11 +1932,13 @@ function CarForm({ car, onCancel, onSaved, notify }) {
   const runDecode = async (vin) => {
     if (!isValidVinFormat(vin)) {
       notify("That doesn't look like a complete 17-character VIN.");
-      return;
+      return null;
     }
     setDecoding(true);
+    let decoded = null;
     try {
       const info = await decodeVin(vin);
+      decoded = info;
       setV((prev) => {
         const next = { ...prev, vin };
         const fill = (key, val) => {
@@ -1953,6 +1955,7 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       notify("Couldn't decode that VIN. You can still fill the fields by hand.");
     }
     setDecoding(false);
+    return decoded;
   };
 
   const handleScanned = (vin) => {
@@ -1995,11 +1998,25 @@ function CarForm({ car, onCancel, onSaved, notify }) {
       }
       if (info.vin && !current) {
         setV((prev) => ({ ...prev, vin: info.vin }));
-        await runDecode(info.vin);
-        got.unshift("VIN, year, make and model");
+        got.unshift("VIN");
+      }
+      // Year, make, model and trim come from looking the VIN up, not from
+      // the page — so look it up whenever any of them is still blank, even
+      // if the VIN was already in the form before this document was added.
+      const vinKnown = info.vin || current;
+      let lookupFailed = false;
+      if (vinKnown && isValidVinFormat(vinKnown) && !(v.year && v.make && v.model)) {
+        const d = await runDecode(vinKnown);
+        if (d) got.push(`${d.year} ${d.make} ${d.model}`.trim());
+        else lookupFailed = true;
       }
 
-      if (got.length) {
+      if (lookupFailed) {
+        notify(
+          (got.length ? `Filled in: ${got.join(", ")}. ` : "") +
+            "The year/make/model lookup didn't answer — press Decode VIN to try again."
+        );
+      } else if (got.length) {
         notify(`Filled in from that document: ${got.join(", ")}. Check them before saving.`);
       } else if (inspection && info.rejected) {
         notify("That looks like a rejected inspection, so the car was not marked as inspected.");
