@@ -431,13 +431,15 @@ end;
 $$;
 
 drop trigger if exists cars_stamp_updated on public.cars;
+-- INSERT as well as UPDATE: a car that is added and never edited still needs
+-- to show who added it.
 create trigger cars_stamp_updated
-  before update on public.cars
+  before insert or update on public.cars
   for each row execute function public.stamp_updated_by();
 
 drop trigger if exists sales_stamp_updated on public.sales;
 create trigger sales_stamp_updated
-  before update on public.sales
+  before insert or update on public.sales
   for each row execute function public.stamp_updated_by();
 
 -- Realtime: push live INSERT/UPDATE/DELETE on cars and sales to every

@@ -1299,7 +1299,8 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
               <p className="row-meta">
                 {c.price ? money(c.price) : "No price yet"} · {miles(c.mileage)} mi · {c.condition}
                 {c.vin ? ` · VIN ${c.vin}` : ""}
-                {c.updatedBy && ` · updated by ${c.updatedBy} ${timeAgo(c.updatedAt)}`}
+                {c.updatedBy &&
+                  ` · ${c.updatedAt && c.createdAt && c.updatedAt - c.createdAt < 10000 ? "added" : "updated"} by ${c.updatedBy} ${timeAgo(c.updatedAt)}`}
               </p>
               <div className="chips">
                 {c.sold ? (
@@ -3018,7 +3019,8 @@ function SalesList({ sales, onNew, onEdit, onDelete }) {
                 <p className="row-meta">
                   {(s.buyer && s.buyer.name) || "No buyer name yet"} · {s.sale_date} · Total{" "}
                   {moneyCents(t.totalDue)} · Profit {moneyCents(t.netProfit)}
-                  {s.updated_by && ` · updated by ${s.updated_by} ${timeAgo(s.updated_at)}`}
+                  {s.updated_by &&
+                    ` · ${s.updated_at && s.created_at && new Date(s.updated_at) - new Date(s.created_at) < 10000 ? "added" : "updated"} by ${s.updated_by} ${timeAgo(s.updated_at)}`}
                 </p>
                 <div className="chips">
                   {s.finalized ? (
