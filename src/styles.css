@@ -172,7 +172,10 @@ button{font:inherit;cursor:pointer}
 .adbody{padding-top:26px;padding-bottom:60px}
 
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}
-.stats div{background:#fff;border:1px solid var(--line);border-left:3px solid var(--gold);padding:16px 18px;display:flex;flex-direction:column}
+.stats div,.stats button{background:#fff;border:1px solid var(--line);border-left:3px solid var(--gold);padding:16px 18px;display:flex;flex-direction:column;text-align:left;font:inherit;color:inherit}
+.stats button{cursor:pointer;transition:.15s}
+.stats button:hover{background:#FAF7EE}
+.stats button.on{border-color:var(--gold);background:#FFF8E6;box-shadow:0 0 0 2px rgba(201,162,75,.45)}
 .stats strong{font-family:var(--display);font-size:28px;color:var(--navy-700)}
 .stats em{font-family:var(--cond);font-style:normal;text-transform:uppercase;letter-spacing:.16em;font-size:12px;color:var(--muted);margin-top:4px}
 
@@ -467,3 +470,6 @@ button{font:inherit;cursor:pointer}
 .doc-report ul{list-style:none;margin:8px 0;padding:0;font-size:14px;line-height:1.5}
 .doc-report li.ok b{color:#1F6B3A}
 .doc-report li.no b{color:#B4442F}
+
+.docs-group{font-family:var(--display);font-size:15px;margin:22px 0 0;color:var(--navy-700)}
+.docs-group em{font-family:var(--body);font-style:normal;font-size:12px;color:var(--muted);margin-left:8px}

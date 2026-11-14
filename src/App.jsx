@@ -1140,7 +1140,7 @@ function Admin({ go, say }) {
           />
         )}
 
-        {!editing && !editingSale && tab === "documents" && <DocumentsAudit notify={notify} />}
+        {!editing && !editingSale && tab === "documents" && <DocumentsAudit notify={notify} cars={cars} />}
 
         {!editing && !editingSale && tab === "team" && profile && profile.role === "admin" && (
           <TeamPanel notify={notify} myId={session.user.id} />
@@ -1203,10 +1203,17 @@ function SignIn({ go }) {
   );
 }
 
+const INVENTORY_GROUPS = {
+  live: { label: "On the website", test: (c) => c.published && !c.sold },
+  drafts: { label: "Drafts", test: (c) => !c.published },
+  sold: { label: "Sold", test: (c) => !!c.sold },
+};
+
 function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
-  const live = cars.filter((c) => c.published && !c.sold).length;
-  const sold = cars.filter((c) => c.sold).length;
-  const drafts = cars.filter((c) => !c.published).length;
+  const [show, setShow] = useState("all"); // all | live | drafts | sold
+  const count = (k) => cars.filter(INVENTORY_GROUPS[k].test).length;
+  const shown = show === "all" ? cars : cars.filter(INVENTORY_GROUPS[show].test);
+  const toggle = (k) => setShow((cur) => (cur === k ? "all" : k));
 
   if (!cars.length)
     return (
@@ -1223,22 +1230,32 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
   return (
     <>
       <div className="stats">
-        <div>
-          <strong>{live}</strong>
-          <em>On the website</em>
-        </div>
-        <div>
-          <strong>{drafts}</strong>
-          <em>Drafts</em>
-        </div>
-        <div>
-          <strong>{sold}</strong>
-          <em>Sold</em>
-        </div>
+        {Object.entries(INVENTORY_GROUPS).map(([k, g]) => (
+          <button
+            key={k}
+            type="button"
+            className={show === k ? "on" : ""}
+            aria-pressed={show === k}
+            onClick={() => toggle(k)}
+          >
+            <strong>{count(k)}</strong>
+            <em>{g.label}</em>
+          </button>
+        ))}
       </div>
 
+      {show !== "all" && (
+        <p className="scan-hint" style={{ marginTop: -8, marginBottom: 14 }}>
+          Showing {INVENTORY_GROUPS[show].label.toLowerCase()} only ({shown.length}).{" "}
+          <button type="button" className="linkish" onClick={() => setShow("all")}>
+            Show all {cars.length}
+          </button>
+        </p>
+      )}
+
       <div className="rows">
-        {cars.map((c) => (
+        {shown.length === 0 && <p className="scan-hint">No cars in this group.</p>}
+        {shown.map((c) => (
           <div key={c.id} className={"row" + (c.sold ? " is-sold" : "")}>
             <div className="row-img">{c.cover ? <img src={c.cover} alt="" /> : <CarGhost />}</div>
             <div className="row-main">
@@ -1577,20 +1594,25 @@ function DocumentsPanel({
   const [label, setLabel] = useState("");
   const fileRef = useRef(null);
 
+  // Only a complete VIN counts (so typing one doesn't refetch on every
+  // keystroke, or match half a VIN).
+  const vinKey = isValidVinFormat(vin) ? String(vin).toUpperCase() : "";
+
   const load = useCallback(async () => {
     if (pendingMode) return;
     setLoading(true);
     try {
-      // When a car is known (true for a sale tied to one), scope by car so
-      // this shows that vehicle's full document history — intake, repair,
-      // and this sale together — not just the one sale's own uploads.
-      const rows = await fetchDocuments(carId ? { carId } : { saleId });
+      // When a car is known (true for a sale tied to one), scope by the car
+      // — its record and its VIN — so this shows that one vehicle's full
+      // document history (intake, inspection, repair and the sale) and
+      // nothing from any other vehicle.
+      const rows = await fetchDocuments(carId ? { carId, vin: vinKey } : { saleId });
       setDocs(rows);
     } catch (e) {
       notify("Couldn't load documents.");
     }
     setLoading(false);
-  }, [carId, saleId, notify, pendingMode]);
+  }, [carId, saleId, vinKey, notify, pendingMode]);
 
   useEffect(() => {
     load();
@@ -2932,18 +2954,22 @@ function SalesList({ sales, onNew, onEdit, onDelete }) {
 /* ---------- Fleet-wide document search — for a dealer-board inquiry that
    isn't about one car in particular: pull everything by VIN, category, or
    date range, across every car and sale, including ones no longer listed. */
-function DocumentsAudit({ notify }) {
+function DocumentsAudit({ notify, cars = [] }) {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [vehicleId, setVehicleId] = useState("");
   const [docs, setDocs] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const run = async () => {
+  const run = async (override) => {
     setLoading(true);
     try {
+      const pick = cars.find((c) => c.id === (override !== undefined ? override : vehicleId));
       const rows = await fetchDocuments({
+        carId: pick ? pick.id : undefined,
+        vin: pick ? pick.vin : undefined,
         q: q.trim() || undefined,
         category: category || undefined,
         from: from ? `${from}T00:00:00` : undefined,
@@ -2978,6 +3004,23 @@ function DocumentsAudit({ notify }) {
         longer in inventory.
       </p>
       <div className="docs-audit-filters">
+        <select
+          value={vehicleId}
+          onChange={(e) => {
+            setVehicleId(e.target.value);
+            run(e.target.value);
+          }}
+          aria-label="Vehicle"
+        >
+          <option value="">All vehicles</option>
+          {cars.map((c) => (
+            <option key={c.id} value={c.id}>
+              {title(c)}
+              {c.vin ? ` — ${c.vin}` : ""}
+              {c.sold ? " (sold)" : !c.published ? " (draft)" : ""}
+            </option>
+          ))}
+        </select>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -3005,23 +3048,48 @@ function DocumentsAudit({ notify }) {
       ) : docs.length === 0 ? (
         <p className="scan-hint">No documents match that search.</p>
       ) : (
-        <ul className="docs-list">
-          {docs.map((d) => (
-            <li key={d.id}>
-              <span className={`doc-tag doc-${d.category}`}>{d.category}</span>
-              <span className="doc-name">
-                {d.vehicle || "—"} {d.vin && <em>({d.vin})</em>} — {d.label || d.file_name}
-              </span>
-              <span className="doc-date">{new Date(d.created_at).toLocaleDateString()}</span>
-              <button type="button" className="linkish" onClick={() => view(d)}>
-                View
-              </button>
-            </li>
-          ))}
-        </ul>
+        groupByVehicle(docs).map((g) => (
+          <div key={g.key}>
+            <p className="docs-group">
+              {g.vehicle || "Not linked to a vehicle"}
+              {g.vin && <em>VIN {g.vin}</em>}
+              <em>
+                {g.docs.length} document{g.docs.length === 1 ? "" : "s"}
+              </em>
+            </p>
+            <ul className="docs-list">
+              {g.docs.map((d) => (
+                <li key={d.id}>
+                  <span className={`doc-tag doc-${d.category}`}>{d.category}</span>
+                  <span className="doc-name">{d.label || d.file_name}</span>
+                  <span className="doc-date">{new Date(d.created_at).toLocaleDateString()}</span>
+                  <button type="button" className="linkish" onClick={() => view(d)}>
+                    View
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
       )}
     </div>
   );
+}
+
+// One group per vehicle, in the order each vehicle's newest document appears
+// (the list arrives newest first). Documents are keyed by VIN, falling back to
+// the car record, so a vehicle's paperwork stays together even when some of it
+// was filed without the car's id.
+function groupByVehicle(docs) {
+  const groups = new Map();
+  for (const d of docs) {
+    const key = (d.vin || "").toUpperCase() || d.car_id || "none";
+    if (!groups.has(key)) groups.set(key, { key, vehicle: d.vehicle || "", vin: d.vin || "", docs: [] });
+    const g = groups.get(key);
+    if (!g.vehicle && d.vehicle) g.vehicle = d.vehicle;
+    g.docs.push(d);
+  }
+  return [...groups.values()];
 }
 
 /* ---------- Team roster — admin-only. Adding/removing people is done in

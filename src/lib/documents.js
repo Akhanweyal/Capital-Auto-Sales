@@ -51,10 +51,23 @@ export async function uploadDocument(file, meta) {
   return data;
 }
 
-// filters: { carId, saleId, category, q, from, to }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
+
+// filters: { carId, vin, saleId, category, q, from, to }
+//
+// A vehicle's documents are found by its record (car_id) OR its VIN — every
+// document stores the VIN it was filed under, and a document filed before
+// the car was saved, under a duplicate listing, or from a sale can carry the
+// VIN without the car's id. Matching either keeps one vehicle's paperwork
+// together without ever pulling in another vehicle's.
 export async function fetchDocuments(filters = {}) {
   let query = supabase.from("documents").select("*").order("created_at", { ascending: false });
-  if (filters.carId) query = query.eq("car_id", filters.carId);
+  const byCar = filters.carId && UUID_RE.test(filters.carId) ? filters.carId : "";
+  const byVin = filters.vin && VIN_RE.test(filters.vin) ? filters.vin.toUpperCase() : "";
+  if (byCar && byVin) query = query.or(`car_id.eq.${byCar},vin.ilike.${byVin}`);
+  else if (byCar) query = query.eq("car_id", byCar);
+  else if (byVin) query = query.ilike("vin", byVin);
   if (filters.saleId) query = query.eq("sale_id", filters.saleId);
   if (filters.category) query = query.eq("category", filters.category);
   if (filters.from) query = query.gte("created_at", filters.from);
