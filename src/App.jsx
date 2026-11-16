@@ -34,6 +34,7 @@ import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.j
 import { readVehicleDocument, imagesForAI, interpretAIReading } from "./lib/auctionDoc.js";
 import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
 import { logTestDrive, fetchTestDrives, markReturned, OPERATOR_TYPES } from "./lib/testDrives.js";
+import { postText } from "./lib/social.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -1359,6 +1360,25 @@ function Inventory({ cars, onEdit, onAdd, onSell, patch, remove, notify }) {
               {!c.sold && (
                 <button className="mini" onClick={() => onSell(c)}>
                   Sell
+                </button>
+              )}
+              {c.published && (
+                <button
+                  className="mini"
+                  onClick={async () => {
+                    const text = postText(c, DEALER, shareLink(c));
+                    try {
+                      await navigator.clipboard.writeText(text);
+                      notify(
+                        "Post text copied — paste it into Google, Facebook or Instagram." +
+                          (c.cover ? "" : " This car has no photos yet.")
+                      );
+                    } catch (e) {
+                      window.prompt("Copy this post text:", text);
+                    }
+                  }}
+                >
+                  Copy post
                 </button>
               )}
               {c.published && (
