@@ -446,3 +446,15 @@ export async function readVehicleDocument(file, { onProgress } = {}) {
   return info;
 }
 
+
+// Pages of a stored PDF as pictures, so a complete vehicle file can be printed
+// in one go. Capped so one huge PDF can't exhaust the browser's memory.
+export async function pdfPageImages(file, { maxPages = 15, scale = 1.5 } = {}) {
+  const doc = await pdfDocument(file);
+  const images = [];
+  for (let i = 1; i <= Math.min(doc.numPages, maxPages); i++) {
+    const canvas = await pdfPageCanvas(doc, i, scale);
+    images.push(canvas.toDataURL("image/jpeg", 0.85));
+  }
+  return { images, total: doc.numPages };
+}

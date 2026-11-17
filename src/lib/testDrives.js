@@ -77,3 +77,10 @@ export async function markReturned(id) {
   if (error) throw error;
   return data;
 }
+
+// Every trip, for the vehicle files (one list for the whole dealership).
+export async function fetchAllTestDrives() {
+  const { data, error } = await supabase.from("test_drives").select("*").order("out_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}

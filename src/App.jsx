@@ -33,7 +33,9 @@ import { BLANK_SALE, calcVaTax, saleTotals, salesToCsv, todayLocal, num, SERVICE
 import { decodeVin, isValidVinFormat, isValidVin, extractVin } from "./lib/vin.js";
 import { readVehicleDocument, imagesForAI, interpretAIReading } from "./lib/auctionDoc.js";
 import { DOC_CATEGORIES, uploadDocument, fetchDocuments, signedDocUrl } from "./lib/documents.js";
-import { logTestDrive, fetchTestDrives, markReturned, OPERATOR_TYPES } from "./lib/testDrives.js";
+import { logTestDrive, fetchTestDrives, fetchAllTestDrives, markReturned, OPERATOR_TYPES } from "./lib/testDrives.js";
+import { buildVehicleRecords, recordsToCsv, RETENTION_YEARS, STATUS_TEXT } from "./lib/records.js";
+import { loadDocumentPages } from "./lib/recordsPrint.js";
 import { postText } from "./lib/social.js";
 
 /* ============================================================
@@ -123,7 +125,7 @@ function usePrintDoc() {
     if (!printDoc) return;
     const done = () => setPrintDoc(null);
     window.addEventListener("afterprint", done);
-    const t = setTimeout(() => window.print(), 50);
+    const t = setTimeout(() => window.print(), 300);
     return () => {
       clearTimeout(t);
       window.removeEventListener("afterprint", done);
@@ -1011,7 +1013,18 @@ function Admin({ go, say }) {
   };
 
   const remove = async (car) => {
-    if (!window.confirm(`Delete the ${title(car)}? This removes the listing and its photos.`)) return;
+    // A sold car, or one with a sale on file, is a record Virginia has dealers keep for
+    // five years (Va. Code § 46.2-1529) — it stays, and shows in Vehicle files.
+    if (car.sold || sales.some((x) => x.car_id === car.id)) {
+      notify("This car has a sale on file, and Virginia has dealers keep sales records for 5 years — it can't be deleted. It stays in Vehicle files.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Delete the ${title(car)}? This removes the listing and its photos. Documents already filed for it are kept, under its VIN, in Vehicle files.`
+      )
+    )
+      return;
     try {
       await deleteCar(car);
       setCars((cs) => cs.filter((c) => c.id !== car.id));
@@ -1063,6 +1076,9 @@ function Admin({ go, say }) {
           </button>
           <button className={tab === "documents" ? "on" : ""} onClick={() => openTab("documents")}>
             Documents
+          </button>
+          <button className={tab === "files" ? "on" : ""} onClick={() => openTab("files")}>
+            Vehicle files
           </button>
           {profile && profile.role === "admin" && (
             <button className={tab === "team" ? "on" : ""} onClick={() => openTab("team")}>
@@ -1157,15 +1173,11 @@ function Admin({ go, say }) {
             onNew={() => setEditingSale({})}
             onEdit={(sale) => setEditingSale({ sale })}
             onDelete={async (sale) => {
-              if (
-                !window.confirm(
-                  sale.finalized
-                    ? "This sale is finalized. Virginia requires dealers to keep sales records for five years " +
-                        "(Va. Code § 46.2-1529) — only delete it if it was a test or a mistake. Delete anyway?"
-                    : "Delete this buyer's order? This does not un-sell the car."
-                )
-              )
+              if (sale.finalized) {
+                notify("A finalized sale can't be deleted — Virginia has dealers keep sales records for 5 years. It stays in Vehicle files.");
                 return;
+              }
+              if (!window.confirm("Delete this draft buyer's order? This does not un-sell the car.")) return;
               try {
                 await deleteSale(sale.id);
                 setSales((ss) => ss.filter((x) => x.id !== sale.id));
@@ -1178,6 +1190,8 @@ function Admin({ go, say }) {
         )}
 
         {!editing && !editingSale && tab === "documents" && <DocumentsAudit notify={notify} cars={cars} />}
+
+        {!editing && !editingSale && tab === "files" && <VehicleFiles cars={cars} sales={sales} notify={notify} />}
 
         {!editing && !editingSale && tab === "team" && profile && profile.role === "admin" && (
           <TeamPanel notify={notify} myId={session.user.id} />
@@ -3205,6 +3219,465 @@ function groupByVehicle(docs) {
     g.docs.push(d);
   }
   return [...groups.values()];
+}
+
+/* ---------- Vehicle files — everything held on one vehicle, in one place.
+   Va. Code § 46.2-1529 has dealers keep sales, purchases, titles, odometer
+   statements and inspections for five years in a form that can be retrieved.
+   This gathers a vehicle's buyer's order, documents, inspection and test
+   drives under its VIN, so the file is still here after the car is sold or
+   taken out of inventory, and can be printed as one packet. ---------- */
+const dateText = (v) => {
+  if (!v) return "";
+  const s = String(v);
+  const d = new Date(s.length === 10 ? `${s}T12:00:00` : s);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
+};
+
+const STATUS_CHIP = { sold: "chip chip-sold", stock: "chip chip-live", removed: "chip chip-warn", unlinked: "chip" };
+
+function vehicleFacts(rec) {
+  const car = rec.car;
+  const sv = (rec.sales[0] && rec.sales[0].vehicle) || {};
+  const warranty = car ? car.warrantyType : rec.sales[0] && rec.sales[0].warranty_type;
+  return [
+    ["Year / make / model", car ? `${car.year} ${car.make} ${car.model}${car.trim ? " " + car.trim : ""}` : `${sv.year || ""} ${sv.make || ""} ${sv.model || ""}`.trim() || rec.label],
+    ["VIN", rec.vin || "—"],
+    ["Color", (car && car.color) || sv.color1 || "—"],
+    ["Mileage", car ? miles(car.mileage) : sv.mileage ? miles(sv.mileage) : "—"],
+    ["State safety inspection", car ? (car.safetyInspected ? `Passed${car.safetyInspectedDate ? " " + dateText(car.safetyInspectedDate) : ""}` : "Not recorded") : sv.stateInspectionNo ? `No. ${sv.stateInspectionNo}` : "—"],
+    ["Warranty disclosed", (WARRANTY_TYPES.find((w) => w.value === warranty) || {}).label || "—"],
+  ];
+}
+
+function VehicleFiles({ cars, sales, notify }) {
+  const [docs, setDocs] = useState(null);
+  const [drives, setDrives] = useState([]);
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
+  const [openKey, setOpenKey] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([fetchDocuments({}), fetchAllTestDrives()])
+      .then(([d, t]) => {
+        if (!live) return;
+        setDocs(d);
+        setDrives(t);
+      })
+      .catch(() => {
+        if (!live) return;
+        notify("Couldn't load the document records.");
+        setDocs([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [notify]);
+
+  const records = useMemo(
+    () => (docs ? buildVehicleRecords({ cars, sales, documents: docs, drives }) : []),
+    [cars, sales, docs, drives]
+  );
+
+  const open = openKey && records.find((r) => r.key === openKey);
+  if (open) return <VehicleFile rec={open} onBack={() => setOpenKey(null)} notify={notify} />;
+
+  const needle = q.trim().toLowerCase();
+  const shown = records.filter((r) => {
+    if (status && r.status !== status) return false;
+    if (!needle) return true;
+    const hay = [r.label, r.vin, r.buyer, ...r.docs.map((d) => `${d.label} ${d.file_name}`)].join(" ").toLowerCase();
+    return hay.includes(needle);
+  });
+
+  const exportCsv = () => {
+    const blob = new Blob([recordsToCsv(shown)], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vehicle-records-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="form">
+      <p className="micro gold">Vehicle files</p>
+      <p className="scan-hint" style={{ marginBottom: 12 }}>
+        Everything held on one vehicle, in one place — the buyer's order, documents, inspection and
+        test drives — and still here after it is sold or taken out of inventory. Virginia has dealers
+        keep these records for {RETENTION_YEARS} years (Va. Code § 46.2-1529), and a sold car or a
+        finalized sale can't be deleted from this site.
+      </p>
+      <div className="docs-audit-filters">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search VIN, vehicle, buyer or document…" />
+        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+          <option value="">All vehicles</option>
+          <option value="sold">Sold</option>
+          <option value="stock">In inventory</option>
+          <option value="removed">Removed from inventory</option>
+        </select>
+        <button type="button" className="mini" onClick={exportCsv} disabled={!shown.length}>
+          Export list (CSV)
+        </button>
+      </div>
+
+      {docs === null ? (
+        <p className="scan-hint">Loading…</p>
+      ) : shown.length === 0 ? (
+        <p className="scan-hint">No vehicle files match.</p>
+      ) : (
+        <div className="rows" style={{ marginTop: 14 }}>
+          {shown.map((r) => (
+            <div key={r.key} className="row">
+              <div className="row-main">
+                <h3>{r.label}</h3>
+                <p className="row-meta">
+                  {r.vin ? `VIN ${r.vin} · ` : ""}
+                  {r.docs.length} document{r.docs.length === 1 ? "" : "s"} · {r.drives.length} test drive
+                  {r.drives.length === 1 ? "" : "s"}
+                  {r.saleDate ? ` · sold ${dateText(r.saleDate)}${r.buyer ? " to " + r.buyer : ""}` : ""}
+                  {r.keepUntil ? ` · keep until ${dateText(r.keepUntil)}` : ""}
+                </p>
+                <div className="chips">
+                  <span className={STATUS_CHIP[r.status]}>{STATUS_TEXT[r.status]}</span>
+                </div>
+              </div>
+              <div className="row-acts">
+                <button className="mini" onClick={() => setOpenKey(r.key)}>
+                  Open file
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VehicleFile({ rec, onBack, notify }) {
+  const [printDoc, setPrintDoc] = usePrintDoc();
+  const [loaded, setLoaded] = useState([]);
+  const [prep, setPrep] = useState("");
+
+  const view = async (d) => {
+    try {
+      window.open(await signedDocUrl(d.path), "_blank", "noopener");
+    } catch (e) {
+      notify("Couldn't open that document.");
+    }
+  };
+
+  const partsOf = (sale) => {
+    const s = { ...BLANK_SALE, ...sale };
+    return { s, totals: saleTotals(s) };
+  };
+
+  // Every stored document becomes printable pages first (a photo is one page,
+  // a PDF one per page), so the whole file prints in one go.
+  const printWholeFile = async () => {
+    const out = [];
+    for (let i = 0; i < rec.docs.length; i++) {
+      setPrep(`Loading document ${i + 1} of ${rec.docs.length}…`);
+      try {
+        out.push({ doc: rec.docs[i], ...(await loadDocumentPages(rec.docs[i])) });
+      } catch (e) {
+        out.push({ doc: rec.docs[i], pages: [], error: true });
+      }
+    }
+    setLoaded(out);
+    setPrep("");
+    const failed = out.filter((x) => x.error).length;
+    if (failed) {
+      notify(`${failed} document${failed > 1 ? "s" : ""} couldn't be loaded for printing — they're listed on the cover sheet; print those from their View link.`);
+    }
+    setPrintDoc({ kind: "packet" });
+  };
+
+  const byCategory = DOC_CATEGORIES.map((c) => ({ ...c, items: rec.docs.filter((d) => d.category === c.value) })).filter((c) => c.items.length);
+  const known = new Set(DOC_CATEGORIES.map((c) => c.value));
+  const otherDocs = rec.docs.filter((d) => !known.has(d.category));
+  if (otherDocs.length) byCategory.push({ value: "x", label: "Other", items: otherDocs });
+
+  return (
+    <div className="form">
+      <div className="form-head">
+        <h2>{rec.label}</h2>
+        <button className="linkish" onClick={onBack}>
+          ← All vehicle files
+        </button>
+      </div>
+      <p className="scan-hint" style={{ marginTop: -10 }}>
+        {rec.vin ? `VIN ${rec.vin}` : "No VIN on file"} · {STATUS_TEXT[rec.status]}
+        {rec.keepUntil
+          ? ` · keep until ${dateText(rec.keepUntil)} (${RETENTION_YEARS} years from the sale date — confirm the starting date with the Dealer Board)`
+          : ""}
+      </p>
+
+      <div className="form-acts" style={{ marginTop: 10 }}>
+        <button className="btn btn-gold" disabled={!!prep} onClick={printWholeFile}>
+          {prep || "Print complete file"}
+        </button>
+      </div>
+      <p className="scan-hint">
+        Prints a cover sheet, the buyer's order and Buyers Guide, the test-drive log, and every stored
+        document. In the print window choose "Save as PDF" to keep a digital copy.
+      </p>
+
+      <div className="cost-section">
+        <p className="micro gold">Vehicle</p>
+        <dl className="rec-dl">
+          {vehicleFacts(rec).map(([k, v]) => (
+            <div key={k}>
+              <dt>{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      <div className="cost-section">
+        <p className="micro gold">Sale — buyer's order</p>
+        {rec.sales.length === 0 ? (
+          <p className="scan-hint">No sale on file for this vehicle.</p>
+        ) : (
+          <ul className="docs-list">
+            {rec.sales.map((sale) => {
+              const { totals } = partsOf(sale);
+              return (
+                <li key={sale.id}>
+                  <span className={"doc-tag " + (sale.finalized ? "doc-sale" : "doc-other")}>{sale.finalized ? "finalized" : "draft"}</span>
+                  <span className="doc-name">
+                    {(sale.buyer && sale.buyer.name) || "No buyer name"} · {dateText(sale.sale_date)} · total {moneyCents(totals.totalPrice)} ·{" "}
+                    {sale.payment_type === "finance" ? "financed" : "cash"}
+                  </span>
+                  <button type="button" className="linkish" onClick={() => setPrintDoc({ kind: "order", sale })}>
+                    Print buyer's order
+                  </button>
+                  <button type="button" className="linkish" onClick={() => setPrintDoc({ kind: "guide", sale })}>
+                    Print Buyers Guide
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="cost-section">
+        <p className="micro gold">Documents ({rec.docs.length})</p>
+        {rec.docs.length === 0 ? (
+          <p className="scan-hint">No documents filed for this vehicle yet. Add them from the car or sale form.</p>
+        ) : (
+          byCategory.map((c) => (
+            <div key={c.value}>
+              <p className="docs-group" style={{ marginTop: 12 }}>
+                {c.label}
+                <em>{c.items.length}</em>
+              </p>
+              <ul className="docs-list">
+                {c.items.map((d) => (
+                  <li key={d.id}>
+                    <span className="doc-name">{d.label || d.file_name}</span>
+                    <span className="doc-date">
+                      filed {dateText(d.created_at)}
+                      {d.uploaded_by ? ` by ${d.uploaded_by}` : ""}
+                    </span>
+                    <button type="button" className="linkish" onClick={() => view(d)}>
+                      View
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="cost-section">
+        <p className="micro gold">Test drives ({rec.drives.length})</p>
+        {rec.drives.length === 0 ? (
+          <p className="scan-hint">No test drives logged.</p>
+        ) : (
+          <ul className="docs-list">
+            {rec.drives.map((t) => (
+              <li key={t.id}>
+                <span className="doc-name">
+                  {t.driver_name || "—"}
+                  {t.dealer_tag ? ` · plate ${t.dealer_tag}` : ""}
+                  {t.salesperson ? ` · salesperson ${t.salesperson}` : ""}
+                </span>
+                <span className="doc-date">
+                  out {new Date(t.out_at).toLocaleString()}
+                  {t.in_at ? ` · back ${new Date(t.in_at).toLocaleString()}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {printDoc && printDoc.kind === "order" && (
+        <PrintPortal>
+          <SaleDocument s={partsOf(printDoc.sale).s} totals={partsOf(printDoc.sale).totals} />
+        </PrintPortal>
+      )}
+      {printDoc && printDoc.kind === "guide" && (
+        <PrintPortal>
+          {(() => {
+            const s = partsOf(printDoc.sale).s;
+            return (
+              <BuyerGuideDocument
+                vehicle={s.vehicle}
+                warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }}
+                serviceContract={num(s.service_contract_amount) > 0}
+              />
+            );
+          })()}
+        </PrintPortal>
+      )}
+      {printDoc && printDoc.kind === "packet" && (
+        <PrintPortal>
+          <RecordPacket rec={rec} loaded={loaded} partsOf={partsOf} />
+        </PrintPortal>
+      )}
+    </div>
+  );
+}
+
+// The printed packet: cover sheet with an index, then the buyer's order and
+// Buyers Guide for each sale, the test-drive log, and every stored document,
+// each on its own page(s).
+function RecordPacket({ rec, loaded, partsOf }) {
+  const failed = loaded.filter((x) => x.error);
+  return (
+    <div className="print-area rec-packet">
+      <section className="rec-cover">
+        <p className="rec-dealer">
+          {DEALER.legalName} — {DEALER.address}, {DEALER.city}
+          {DEALER.licenseNo ? ` — VA Dealer Lic # ${DEALER.licenseNo}` : ""}
+        </p>
+        <h1>VEHICLE RECORD FILE</h1>
+        <table>
+          <tbody>
+            {vehicleFacts(rec).map(([k, v]) => (
+              <tr key={k}>
+                <th>{k}</th>
+                <td>{v}</td>
+              </tr>
+            ))}
+            <tr>
+              <th>Status</th>
+              <td>{STATUS_TEXT[rec.status]}</td>
+            </tr>
+            {rec.saleDate && (
+              <tr>
+                <th>Sold</th>
+                <td>
+                  {dateText(rec.saleDate)}
+                  {rec.buyer ? ` to ${rec.buyer}` : ""}
+                </td>
+              </tr>
+            )}
+            {rec.keepUntil && (
+              <tr>
+                <th>Keep until</th>
+                <td>{dateText(rec.keepUntil)} ({RETENTION_YEARS} years from the sale date, Va. Code § 46.2-1529)</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        <h2>Contents</h2>
+        <ol>
+          {rec.sales.map((sale) => (
+            <li key={sale.id}>
+              Buyer's order and Buyers Guide — {(sale.buyer && sale.buyer.name) || "no buyer name"}, {dateText(sale.sale_date)}
+              {sale.finalized ? "" : " (draft, not finalized)"}
+            </li>
+          ))}
+          {rec.drives.length > 0 && <li>Test-drive log ({rec.drives.length})</li>}
+          {loaded.map(({ doc, pages, total, truncated, error }) => (
+            <li key={doc.id}>
+              {doc.label || doc.file_name} — {doc.category}, filed {dateText(doc.created_at)}
+              {doc.uploaded_by ? ` by ${doc.uploaded_by}` : ""}
+              {error ? " — NOT PRINTED: could not be loaded; print it from its View link" : ` — ${pages.length} page${pages.length === 1 ? "" : "s"}`}
+              {truncated ? ` (first ${pages.length} of ${total} pages)` : ""}
+            </li>
+          ))}
+          {rec.sales.length === 0 && rec.drives.length === 0 && loaded.length === 0 && <li>No records have been filed for this vehicle.</li>}
+        </ol>
+        {failed.length > 0 && <p className="rec-warn">{failed.length} document(s) above could not be loaded for printing.</p>}
+        <p className="rec-foot">Printed {new Date().toLocaleString()}</p>
+      </section>
+
+      {rec.sales.map((sale) => {
+        const { s, totals } = partsOf(sale);
+        return (
+          <React.Fragment key={sale.id}>
+            <div className="rec-section">
+              <SaleDocument s={s} totals={totals} />
+            </div>
+            <div className="rec-section">
+              <BuyerGuideDocument
+                vehicle={s.vehicle}
+                warranty={{ type: s.warranty_type, systems: s.warranty_systems, duration: s.warranty_duration, pctLabor: s.warranty_pct_labor, pctParts: s.warranty_pct_parts }}
+                serviceContract={num(s.service_contract_amount) > 0}
+              />
+            </div>
+          </React.Fragment>
+        );
+      })}
+
+      {rec.drives.length > 0 && (
+        <section className="rec-section">
+          <h2>Test-drive log</h2>
+          <table className="rec-table">
+            <thead>
+              <tr>
+                <th>Out</th>
+                <th>Back</th>
+                <th>Driver</th>
+                <th>Plate</th>
+                <th>Who drove</th>
+                <th>Salesperson</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rec.drives.map((t) => (
+                <tr key={t.id}>
+                  <td>{new Date(t.out_at).toLocaleString()}</td>
+                  <td>{t.in_at ? new Date(t.in_at).toLocaleString() : "—"}</td>
+                  <td>{t.driver_name || "—"}</td>
+                  <td>{t.dealer_tag || "—"}</td>
+                  <td>{(OPERATOR_TYPES.find((o) => o.value === t.operator_type) || {}).label || t.operator_type}</td>
+                  <td>{t.salesperson || "—"}</td>
+                  <td>{t.notes || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {loaded.flatMap(({ doc, pages, total }) =>
+        pages.map((src, p) => (
+          <section key={`${doc.id}-${p}`} className="rec-section rec-docpage">
+            <p className="rec-cap">
+              {doc.label || doc.file_name} · {doc.category} · filed {dateText(doc.created_at)}
+              {doc.uploaded_by ? ` by ${doc.uploaded_by}` : ""} · page {p + 1} of {total}
+            </p>
+            <img src={src} alt="" />
+          </section>
+        ))
+      )}
+    </div>
+  );
 }
 
 /* ---------- Team roster — admin-only. Adding/removing people is done in

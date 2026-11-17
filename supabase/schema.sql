@@ -468,3 +468,36 @@ end $$;
 -- order). The app still saves cars if this hasn't been run yet — it just
 -- can't keep the color until it has.
 alter table public.cars add column if not exists color text default '';
+
+-- ---------- records that must be kept ----------
+-- Va. Code § 46.2-1529: dealer records — sales, purchases, titles, odometer
+-- statements, inspections — are preserved for five years. The site hides the
+-- Delete button for these, and this makes the database itself refuse: a
+-- finalized sale (the buyer's order) and a sold car can't be deleted, even
+-- by a mistaken click or a script. (Documents and the test-drive log already
+-- have no delete.) To remove one for a real reason, e.g. a test entry, do it
+-- deliberately in the Supabase table editor after turning the trigger off.
+create or replace function public.protect_kept_records()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_table_name = 'sales' and old.finalized then
+    raise exception 'A finalized sale must be kept for 5 years (Va. Code 46.2-1529) and cannot be deleted.';
+  end if;
+  if tg_table_name = 'cars' and old.sold then
+    raise exception 'A sold car must be kept for 5 years (Va. Code 46.2-1529) and cannot be deleted.';
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists sales_protect_kept on public.sales;
+create trigger sales_protect_kept
+  before delete on public.sales
+  for each row execute function public.protect_kept_records();
+
+drop trigger if exists cars_protect_kept on public.cars;
+create trigger cars_protect_kept
+  before delete on public.cars
+  for each row execute function public.protect_kept_records();
