@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { PrintPortal, usePrintDoc } from "./App.jsx";
 import { uploadDocument } from "./lib/documents.js";
+import CarRecon, { carLabel } from "./CarRecon.jsx";
 import {
   DEFAULT_SETTINGS,
   STATUSES,
@@ -177,7 +178,6 @@ function carTicket(car, settings, tickets, shop) {
     vehicle: { year: String(car.year || ""), make: car.make || "", model: car.model || "", trim: car.trim || "", color: car.color || "", vin: car.vin || "", miles: car.mileage ? String(car.mileage) : "" },
   };
 }
-const carLabel = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}${c.vin ? " · " + c.vin : ""}${c.sold ? " (sold)" : c.published ? "" : " (draft)"}`;
 
 function TicketsView({ tickets, settings, cars, onOpen }) {
   const [shop, setShop] = useState("all");
@@ -1207,6 +1207,9 @@ function ReportsView({ tickets, ledger, settings }) {
 
 /* ---------- inventory recon by car ---------- */
 function ReconView({ tickets, cars, settings, onOpen }) {
+  const [openId, setOpenId] = useState("");
+  const openCar = cars.find((c) => c.id === openId);
+  if (openCar) return <CarRecon car={openCar} tickets={tickets} settings={settings} onBack={() => setOpenId("")} onOpen={onOpen} />;
   const by = useMemo(() => reconByCar(tickets, settings), [tickets, settings]);
   const rows = Object.entries(by)
     .map(([id, g]) => ({ id, g, car: cars.find((c) => c.id === id) }))
@@ -1214,6 +1217,18 @@ function ReconView({ tickets, cars, settings, onOpen }) {
   const unlinked = tickets.filter((t) => t.source === "dealer" && t.status !== "void" && !t.carId);
   return (
     <>
+      <div className="shop-actions" style={{ marginBottom: 6 }}>
+        <select value={openId} onChange={(e) => setOpenId(e.target.value)} className="shop-carpick" aria-label="Car">
+          <option value="">Open the full cost sheet for a car…</option>
+          {[...cars]
+            .sort((a, b) => Number(a.sold) - Number(b.sold) || (b.year || 0) - (a.year || 0))
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {carLabel(c)}
+              </option>
+            ))}
+        </select>
+      </div>
       <p className="scan-hint" style={{ margin: "10px 0" }}>
         All shop work on our own cars, grouped by car, so each car's real reconditioning cost is on record before it's priced or sold. When you start a buyer's order for one of these cars, this cost is added to its expenses so the profit is right.
       </p>
@@ -1233,7 +1248,15 @@ function ReconView({ tickets, cars, settings, onOpen }) {
             <tbody>
               {rows.map(({ id, g, car }) => (
                 <tr key={id}>
-                  <td>{car ? `${car.year} ${car.make} ${car.model}${car.sold ? " (sold)" : ""}` : "Removed car"}</td>
+                  <td>
+                    {car ? (
+                      <button className="linkish" onClick={() => setOpenId(id)}>
+                        {`${car.year} ${car.make} ${car.model}${car.sold ? " (sold)" : ""}`}
+                      </button>
+                    ) : (
+                      "Removed car"
+                    )}
+                  </td>
                   <td>
                     {g.tickets.map((n) => {
                       const t = tickets.find((x) => x.num === n && x.carId === id);
