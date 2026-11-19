@@ -129,7 +129,7 @@ export default function Shop({ cars, notify }) {
         <p className="scan-hint">Loading…</p>
       ) : (
         <>
-          {sub === "tickets" && <TicketsView tickets={tickets} settings={settings} onOpen={setEditing} />}
+          {sub === "tickets" && <TicketsView tickets={tickets} settings={settings} cars={cars} onOpen={setEditing} />}
           {sub === "money" && <MoneyView ledger={ledger} setLedger={setLedger} settings={settings} notify={notify} />}
           {sub === "reports" && <ReportsView tickets={tickets} ledger={ledger} settings={settings} />}
           {sub === "recon" && <ReconView tickets={tickets} cars={cars} settings={settings} onOpen={setEditing} />}
@@ -152,7 +152,7 @@ function blankTicket(settings, tickets, shop) {
     status: "open",
     carId: null,
     customer: { name: "", phone: "" },
-    vehicle: { year: "", make: "", model: "", vin: "", miles: "" },
+    vehicle: { year: "", make: "", model: "", trim: "", color: "", vin: "", miles: "" },
     concern: "",
     services: [],
     tech: "",
@@ -166,12 +166,35 @@ function blankTicket(settings, tickets, shop) {
 }
 
 /* ---------- tickets list ---------- */
-function TicketsView({ tickets, settings, onOpen }) {
+// A dealer ticket for a car in inventory, with everything we know about the car.
+function carTicket(car, settings, tickets, shop) {
+  const t = blankTicket(settings, tickets, shop);
+  return {
+    ...t,
+    source: "dealer",
+    taxRate: 0,
+    carId: car.id,
+    vehicle: { year: String(car.year || ""), make: car.make || "", model: car.model || "", trim: car.trim || "", color: car.color || "", vin: car.vin || "", miles: car.mileage ? String(car.mileage) : "" },
+  };
+}
+const carLabel = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}${c.vin ? " · " + c.vin : ""}${c.sold ? " (sold)" : c.published ? "" : " (draft)"}`;
+
+function TicketsView({ tickets, settings, cars, onOpen }) {
   const [shop, setShop] = useState("all");
   const [source, setSource] = useState("all");
   const [status, setStatus] = useState("active");
   const [q, setQ] = useState("");
   const [printDoc, setPrintDoc] = usePrintDoc();
+  const [pick, setPick] = useState("");
+  const shopArg = shop !== "all" ? shop : null;
+  // Inventory cars (drafts and sold included) that match what was typed — a VIN,
+  // or part of the year/make/model — so a ticket can start from the car.
+  const needleQ = q.trim().toLowerCase();
+  const carMatches =
+    needleQ.length >= 3
+      ? cars.filter((c) => [c.vin, c.year, c.make, c.model, c.trim, c.color].join(" ").toLowerCase().includes(needleQ)).slice(0, 5)
+      : [];
+  const pickedCar = cars.find((c) => c.id === pick);
 
   const live = tickets.filter((t) => t.status !== "void");
   const shown = tickets
@@ -207,7 +230,7 @@ function TicketsView({ tickets, settings, onOpen }) {
         })}
       </div>
       <div className="docs-audit-filters">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticket #, VIN, customer, car…" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticket #, customer — or type a VIN to find the car in inventory…" />
         <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Customer type">
           <option value="all">All work</option>
           <option value="dealer">Dealer inventory</option>
@@ -223,13 +246,49 @@ function TicketsView({ tickets, settings, onOpen }) {
           ))}
         </select>
       </div>
+      {carMatches.length > 0 && (
+        <div className="shop-carhits">
+          <p className="micro gold">In our inventory</p>
+          {carMatches.map((c) => (
+            <div key={c.id} className="shop-carhit">
+              <span>{carLabel(c)}</span>
+              <button className="mini" onClick={() => onOpen(carTicket(c, settings, tickets, shopArg))}>
+                New ticket
+              </button>
+              <button className="mini" onClick={() => setPrintDoc({ ticket: carTicket(c, settings, tickets, shopArg) })}>
+                Print ticket
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="shop-actions">
-        <button className="btn btn-gold" onClick={() => onOpen(blankTicket(settings, tickets, shop !== "all" ? shop : null))}>
+        <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Inventory car" className="shop-carpick">
+          <option value="">Ticket for an inventory car…</option>
+          {[...cars].sort((a, b) => Number(a.sold) - Number(b.sold) || (b.year || 0) - (a.year || 0)).map((c) => (
+            <option key={c.id} value={c.id}>
+              {carLabel(c)}
+            </option>
+          ))}
+        </select>
+        {pickedCar && (
+          <>
+            <button className="btn btn-gold" onClick={() => onOpen(carTicket(pickedCar, settings, tickets, shopArg))}>
+              Open ticket
+            </button>
+            <button className="btn btn-navy" onClick={() => setPrintDoc({ ticket: carTicket(pickedCar, settings, tickets, shopArg) })}>
+              Print ticket
+            </button>
+          </>
+        )}
+      </div>
+      <div className="shop-actions">
+        <button className="btn btn-gold" onClick={() => onOpen(blankTicket(settings, tickets, shopArg))}>
           + New ticket
         </button>
         <button
           className="btn btn-navy"
-          onClick={() => setPrintDoc({ ticket: blankTicket(settings, tickets, shop !== "all" ? shop : null), blank: true })}
+          onClick={() => setPrintDoc({ ticket: blankTicket(settings, tickets, shopArg), blank: true })}
         >
           Print blank ticket
         </button>
@@ -306,7 +365,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, onCancel, onSave
   const pickCar = (id) => {
     const c = cars.find((x) => x.id === id);
     if (!c) return set({ carId: null });
-    set({ carId: c.id, vehicle: { year: String(c.year || ""), make: c.make || "", model: c.model || "", vin: c.vin || "", miles: String(c.mileage || "") } });
+    set({ carId: c.id, vehicle: { year: String(c.year || ""), make: c.make || "", model: c.model || "", trim: c.trim || "", color: c.color || "", vin: c.vin || "", miles: c.mileage ? String(c.mileage) : "" } });
   };
 
   const toggleService = (s) => set({ services: t.services.includes(s) ? t.services.filter((x) => x !== s) : [...t.services, s] });
@@ -677,9 +736,9 @@ export function TicketPrint({ t, settings, blank }) {
         <div className="wo-box">
           <small>Vehicle</small>
           <p>
-            Year {line(t.vehicle.year, 50)} Make {line(t.vehicle.make, 80)} Model {line(t.vehicle.model, 80)}
+            Year {line(t.vehicle.year, 50)} Make {line(t.vehicle.make, 80)} Model {line((t.vehicle.model || "") + (t.vehicle.trim ? " " + t.vehicle.trim : ""), 80)}
           </p>
-          <p>VIN: {line(t.vehicle.vin, 250)}</p>
+          <p>VIN: {line(t.vehicle.vin, 200)} Color: {line(t.vehicle.color, 80)}</p>
           <p>Miles in: {line(t.vehicle.miles, 100)} Mechanic: {line(t.tech, 120)}</p>
         </div>
       </div>

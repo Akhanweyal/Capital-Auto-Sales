@@ -188,7 +188,7 @@ const ticketFromRow = (r) => ({
   status: r.status,
   carId: r.car_id || null,
   customer: { name: r.customer_name || "", phone: r.customer_phone || "" },
-  vehicle: { year: "", make: "", model: "", vin: "", miles: "", ...(r.vehicle || {}) },
+  vehicle: { year: "", make: "", model: "", trim: "", color: "", vin: "", miles: "", ...(r.vehicle || {}) },
   concern: r.concern || "",
   services: Array.isArray(r.services) ? r.services : [],
   tech: r.tech || "",

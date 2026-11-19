@@ -563,3 +563,8 @@ button{font:inherit;cursor:pointer}
 .wo-tot .g td{font-weight:700;font-size:13pt}
 .wo-tot .n{text-align:right}
 .wo-foot{font-size:9.5pt;text-align:center;margin-top:8px}
+
+.shop-carhits{border:1px solid var(--gold);background:#FFF8E6;padding:10px 14px;margin-top:12px}
+.shop-carhit{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.shop-carhit span{flex:1;min-width:240px;font-weight:600}
+.shop-carpick{border:1px solid var(--line);padding:10px;font:inherit;min-width:260px;max-width:100%}
