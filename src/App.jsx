@@ -37,6 +37,8 @@ import { logTestDrive, fetchTestDrives, fetchAllTestDrives, markReturned, OPERAT
 import { buildVehicleRecords, recordsToCsv, RETENTION_YEARS, STATUS_TEXT } from "./lib/records.js";
 import { loadDocumentPages } from "./lib/recordsPrint.js";
 import { postText } from "./lib/social.js";
+import Shop from "./Shop.jsx";
+import { fetchCarRecon } from "./lib/shop.js";
 
 /* ============================================================
    YOUR BUSINESS DETAILS — edit this block and nothing else
@@ -101,7 +103,7 @@ const shareLink = (c) => `${window.location.origin}/car/${c.id}?v=${c.updatedAt 
 // and was paginating print output across several mostly-blank pages. With
 // the content genuinely outside #root, @media print can just hide #root
 // wholesale and show this instead — no leftover phantom space.
-function PrintPortal({ children }) {
+export function PrintPortal({ children }) {
   const elRef = useRef(null);
   if (!elRef.current) {
     elRef.current = document.createElement("div");
@@ -119,7 +121,7 @@ function PrintPortal({ children }) {
 
 // Which printable document is showing, if any. Clears itself once the print
 // dialog closes, so picking the same document a second time prints again.
-function usePrintDoc() {
+export function usePrintDoc() {
   const [printDoc, setPrintDoc] = useState(null);
   useEffect(() => {
     if (!printDoc) return;
@@ -1080,6 +1082,9 @@ function Admin({ go, say }) {
           <button className={tab === "files" ? "on" : ""} onClick={() => openTab("files")}>
             Vehicle files
           </button>
+          <button className={tab === "shop" ? "on" : ""} onClick={() => openTab("shop")}>
+            Repair shops
+          </button>
           {profile && profile.role === "admin" && (
             <button className={tab === "team" ? "on" : ""} onClick={() => openTab("team")}>
               Team
@@ -1192,6 +1197,8 @@ function Admin({ go, say }) {
         {!editing && !editingSale && tab === "documents" && <DocumentsAudit notify={notify} cars={cars} />}
 
         {!editing && !editingSale && tab === "files" && <VehicleFiles cars={cars} sales={sales} notify={notify} />}
+
+        {!editing && !editingSale && tab === "shop" && <Shop cars={cars} notify={notify} />}
 
         {!editing && !editingSale && tab === "team" && profile && profile.role === "admin" && (
           <TeamPanel notify={notify} myId={session.user.id} />
@@ -2017,6 +2024,7 @@ function CarForm({ car, cars = [], onCancel, onSaved, notify }) {
   const [photos, setPhotos] = useState(car ? car.photos : []);
   const [cost, setCost] = useState("");
   const [expenses, setExpenses] = useState([]);
+  const [recon, setRecon] = useState(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [drag, setDrag] = useState(false);
@@ -2248,6 +2256,7 @@ function CarForm({ car, cars = [], onCancel, onSaved, notify }) {
 
   useEffect(() => {
     if (!car) return;
+    fetchCarRecon(car.id).then(setRecon).catch(() => {});
     fetchCarCost(car.id)
       .then((c) => {
         if (c) {
@@ -2863,6 +2872,12 @@ function CarForm({ car, cars = [], onCancel, onSaved, notify }) {
           Other expenses (repairs, detailing, transport…)
         </p>
         <LineItems items={expenses} onChange={setExpenses} addLabel="Add expense" />
+        {recon && recon.cost > 0 && (
+          <p className="scan-hint" style={{ marginTop: 10 }}>
+            Shop work on this car (tickets {recon.tickets.join(", ")}): <b>{moneyCents(recon.cost)}</b> real cost — kept on the Repair shops
+            tab and added to the expenses when you make its buyer's order. Don't re-enter it above.
+          </p>
+        )}
       </div>
 
       <div className="cost-section">
@@ -3821,6 +3836,20 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
     fetchCarCost(car.id)
       .then((c) => {
         if (c) setS((prev) => ({ ...prev, car_cost: c.cost || 0, car_expenses: c.expenses || [] }));
+      })
+      .catch(() => {})
+      // Shop work done on this car in our own repair bays: its real cost counts
+      // against the profit. It's a normal expense line — delete it if the same
+      // repair was already entered by hand on the car. (Runs after the cost
+      // above has loaded so it isn't overwritten.)
+      .then(() => fetchCarRecon(car.id))
+      .then((g) => {
+        if (!g || !(g.cost > 0)) return;
+        setS((prev) => {
+          const label = `Shop work (tickets ${g.tickets.join(", ")})`;
+          if ((prev.car_expenses || []).some((x) => (x.label || "").startsWith("Shop work (tickets"))) return prev;
+          return { ...prev, car_expenses: [...(prev.car_expenses || []), { label, amount: g.cost }] };
+        });
       })
       .catch(() => {});
   }, []);

@@ -501,3 +501,88 @@ drop trigger if exists cars_protect_kept on public.cars;
 create trigger cars_protect_kept
   before delete on public.cars
   for each row execute function public.protect_kept_records();
+
+
+-- ---------- repair shops: work tickets, shop money in/out, shop setup ----------
+-- Dealer-inventory tickets point at a car (car_id) so the real recon cost can
+-- follow that car into its sale profit. Outside-customer tickets are income.
+-- Never public: no anon policy at all.
+create table if not exists public.shop_tickets (
+  id             uuid primary key default gen_random_uuid(),
+  num            text        not null,
+  ticket_date    date        not null default current_date,
+  shop           text        not null,
+  source         text        not null default 'outside',  -- 'dealer' | 'outside'
+  status         text        not null default 'open',
+  car_id         uuid        references public.cars (id) on delete set null,
+  customer_name  text        default '',
+  customer_phone text        default '',
+  vehicle        jsonb       not null default '{}'::jsonb,
+  concern        text        default '',
+  services       jsonb       not null default '[]'::jsonb,
+  tech           text        default '',
+  lines          jsonb       not null default '[]'::jsonb,
+  tax_rate       numeric     not null default 0,
+  paid_amount    numeric     not null default 0,
+  paid_method    text        default '',
+  notes          text        default '',
+  closed_at      timestamptz,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  updated_by     text        default ''
+);
+create table if not exists public.shop_ledger (
+  id         uuid primary key default gen_random_uuid(),
+  kind       text        not null default 'expense',     -- 'expense' | 'income'
+  entry_date date        not null default current_date,
+  shop       text        not null,
+  category   text        default '',
+  amount     numeric     not null default 0,
+  method     text        default '',
+  vendor     text        default '',
+  note       text        default '',
+  created_at timestamptz not null default now()
+);
+create table if not exists public.shop_settings (
+  id   text  primary key,
+  data jsonb not null default '{}'::jsonb
+);
+
+alter table public.shop_tickets  enable row level security;
+alter table public.shop_ledger   enable row level security;
+alter table public.shop_settings enable row level security;
+
+drop policy if exists "dealer manages shop tickets" on public.shop_tickets;
+create policy "dealer manages shop tickets" on public.shop_tickets for all to authenticated using (true) with check (true);
+drop policy if exists "dealer manages shop ledger" on public.shop_ledger;
+create policy "dealer manages shop ledger" on public.shop_ledger for all to authenticated using (true) with check (true);
+drop policy if exists "dealer manages shop settings" on public.shop_settings;
+create policy "dealer manages shop settings" on public.shop_settings for all to authenticated using (true) with check (true);
+
+drop trigger if exists shop_tickets_stamp_updated on public.shop_tickets;
+create trigger shop_tickets_stamp_updated
+  before insert or update on public.shop_tickets
+  for each row execute function public.stamp_updated_by();
+
+-- A closed repair ticket is a service record — keep it (mark it Void instead).
+create or replace function public.protect_kept_records()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_table_name = 'sales' and old.finalized then
+    raise exception 'A finalized sale must be kept for 5 years (Va. Code 46.2-1529) and cannot be deleted.';
+  end if;
+  if tg_table_name = 'cars' and old.sold then
+    raise exception 'A sold car must be kept for 5 years (Va. Code 46.2-1529) and cannot be deleted.';
+  end if;
+  if tg_table_name = 'shop_tickets' and old.status = 'closed' then
+    raise exception 'A closed repair ticket is a service record and cannot be deleted. Mark it Void instead.';
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists shop_tickets_protect_kept on public.shop_tickets;
+create trigger shop_tickets_protect_kept
+  before delete on public.shop_tickets
+  for each row execute function public.protect_kept_records();
