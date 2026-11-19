@@ -45,7 +45,7 @@ const vehText = (v) => [v && v.year, v && v.make, v && v.model].filter(Boolean).
 const SQL_HELP =
   "The shop tables aren't set up yet. Open Supabase → SQL Editor and run the last section of supabase/schema.sql (headed “repair shops”), then reload.";
 
-export default function Shop({ cars, notify, isAdmin }) {
+export default function Shop({ cars, notify, isAdmin, mechanic }) {
   const [tickets, setTickets] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -55,7 +55,7 @@ export default function Shop({ cars, notify, isAdmin }) {
 
   const load = useCallback(async () => {
     try {
-      const [t, l, s] = await Promise.all([fetchTickets(), fetchLedger(), fetchSettings()]);
+      const [t, l, s] = await Promise.all([fetchTickets(), mechanic ? Promise.resolve([]) : fetchLedger(), fetchSettings()]);
       setTickets(t);
       setLedger(l);
       setSettings(s);
@@ -66,7 +66,7 @@ export default function Shop({ cars, notify, isAdmin }) {
         setTickets([]);
       } else notify("Couldn't load the shop records. Check your connection.");
     }
-  }, [notify]);
+  }, [notify, mechanic]);
 
   useEffect(() => {
     load();
@@ -91,6 +91,7 @@ export default function Shop({ cars, notify, isAdmin }) {
     return (
       <TicketForm
         isAdmin={!!isAdmin}
+        mechanic={!!mechanic}
         initial={editing}
         tickets={tickets || []}
         cars={cars}
@@ -116,12 +117,13 @@ export default function Shop({ cars, notify, isAdmin }) {
     ["recon", "Inventory recon"],
     ["setup", "Shop setup"],
   ];
+  const subs = mechanic ? SUBS.slice(0, 1) : SUBS;
 
   return (
     <div className="form">
       <p className="micro gold">Repair shops</p>
       <div className="shop-sub">
-        {SUBS.map(([k, label]) => (
+        {subs.map(([k, label]) => (
           <button key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>
             {label}
           </button>
@@ -131,7 +133,7 @@ export default function Shop({ cars, notify, isAdmin }) {
         <p className="scan-hint">Loading…</p>
       ) : (
         <>
-          {sub === "tickets" && <TicketsView tickets={tickets} settings={settings} cars={cars} onOpen={setEditing} />}
+          {sub === "tickets" && <TicketsView tickets={tickets} settings={settings} cars={cars} mechanic={!!mechanic} onOpen={setEditing} />}
           {sub === "money" && <MoneyView ledger={ledger} setLedger={setLedger} settings={settings} notify={notify} />}
           {sub === "reports" && <ReportsView tickets={tickets} ledger={ledger} settings={settings} />}
           {sub === "recon" && <ReconView tickets={tickets} cars={cars} settings={settings} onOpen={setEditing} />}
@@ -180,7 +182,7 @@ function carTicket(car, settings, tickets, shop) {
   };
 }
 
-function TicketsView({ tickets, settings, cars, onOpen }) {
+function TicketsView({ tickets, settings, cars, mechanic, onOpen }) {
   const [shop, setShop] = useState("all");
   const [source, setSource] = useState("all");
   const [status, setStatus] = useState("active");
@@ -200,6 +202,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
   const live = tickets.filter((t) => t.status !== "void");
   const shown = tickets
     .filter((t) => {
+      if (mechanic && (t.status === "closed" || t.status === "void")) return false;
       if (shop !== "all" && t.shop !== shop) return false;
       if (source !== "all" && t.source !== source) return false;
       if (status === "active" && (t.status === "closed" || t.status === "void")) return false;
@@ -237,7 +240,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
           <option value="dealer">Dealer inventory</option>
           <option value="outside">Outside customers</option>
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status" style={mechanic ? { display: "none" } : undefined}>
           <option value="active">Active (not closed)</option>
           <option value="all">All statuses</option>
           {STATUSES.map(([v, l]) => (
@@ -316,7 +319,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
                   </p>
                   <div className="chips">
                     <span className={"chip shop-" + t.status}>{STATUS_LABEL[t.status] || t.status}</span>
-                    <span className="chip">
+                    <span className={"chip" + (mechanic ? " shop-hide" : "")}>
                       {t.source === "dealer"
                         ? `Total ${cents(r.total)}`
                         : r.balance > 0.004
@@ -340,7 +343,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
       )}
       {printDoc && (
         <PrintPortal>
-          <TicketPrint t={printDoc.ticket} settings={settings} blank={!!printDoc.blank} />
+          <TicketPrint t={printDoc.ticket} settings={settings} blank={!!printDoc.blank} mechanic={!!mechanic} />
         </PrintPortal>
       )}
     </>
@@ -348,7 +351,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
 }
 
 /* ---------- ticket form ---------- */
-function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCancel, onSaved, onDeleted }) {
+function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, mechanic, onCancel, onSaved, onDeleted }) {
   const [t, setT] = useState(() => structuredClone(initial));
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -445,7 +448,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
         <label>
           <span>Status</span>
           <select value={t.status} onChange={(e) => set({ status: e.target.value })}>
-            {STATUSES.map(([v, l]) => (
+            {STATUSES.filter(([v]) => !mechanic || (v !== "closed" && v !== "void")).map(([v, l]) => (
               <option key={v} value={v}>
                 {l}
               </option>
@@ -541,7 +544,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
         <p className="micro gold">Labor, parts &amp; sublet</p>
         <div className="shop-lines">
           {t.lines.map((l, i) => (
-            <div className="shop-line" key={i}>
+            <div className={"shop-line" + (mechanic ? " mech" : "")} key={i}>
               <select
                 value={l.kind}
                 onChange={(e) => setLine(i, { kind: e.target.value, ...(e.target.value === "labor" ? { unit: l.unit || settings.laborRate, cost: 0 } : {}) })}
@@ -560,6 +563,8 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
                 placeholder={l.kind === "labor" ? "Work performed" : l.kind === "part" ? "Part name / number" : l.kind === "sublet" ? "Sent out to / work" : "Fee"}
               />
               <input value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} inputMode="decimal" aria-label={l.kind === "labor" ? "Hours" : "Quantity"} title={l.kind === "labor" ? "Hours" : "Qty"} />
+              {!mechanic && (
+                <>
               <input value={l.unit} onChange={(e) => setLine(i, { unit: e.target.value })} inputMode="decimal" aria-label="Price each" title={l.kind === "labor" ? "Rate / hr" : "Price each"} />
               {l.kind === "part" || l.kind === "sublet" ? (
                 <input value={l.cost} onChange={(e) => setLine(i, { cost: e.target.value })} inputMode="decimal" aria-label="Our cost each" title="Our cost each" />
@@ -567,12 +572,14 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
                 <span className="shop-nocost">—</span>
               )}
               <strong className="shop-amt">{cents(n2(l.qty) * n2(l.unit))}</strong>
+                </>
+              )}
               <button className="linkish" onClick={() => set({ lines: t.lines.filter((_, j) => j !== i) })} aria-label="Remove line">
                 ✕
               </button>
             </div>
           ))}
-          <p className="scan-hint">Columns: type · description · hours/qty · rate or price each · our cost each (parts & sublet) · amount</p>
+          <p className="scan-hint">{mechanic ? "Type · what was done or the part · hours or quantity" : "Columns: type · description · hours/qty · rate or price each · our cost each (parts & sublet) · amount"}</p>
         </div>
         <div className="shop-actions">
           {LINE_KINDS.map(([k, label]) => (
@@ -583,7 +590,15 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
         </div>
       </div>
 
-      <div className="shop-summary">
+      {mechanic && (
+        <div className="fields">
+          <label className="full">
+            <span>Mechanic notes</span>
+            <textarea rows={3} value={t.notes} onChange={(e) => set({ notes: e.target.value })} />
+          </label>
+        </div>
+      )}
+      <div className={"shop-summary" + (mechanic ? " shop-hide" : "")}>
         <div className="fields" style={{ marginTop: 0 }}>
           <label>
             <span>Tax on parts %</span>
@@ -648,7 +663,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
         </dl>
       </div>
 
-      <div className="cost-section">
+      <div className={"cost-section" + (mechanic ? " shop-hide" : "")}>
         <p className="micro gold">Photo of the filled-in ticket</p>
         {t.id ? (
           <>
@@ -674,7 +689,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
         <button className="linkish" onClick={onCancel}>
           Back
         </button>
-        {t.id && (isAdmin || t.status !== "closed") && (
+        {t.id && !mechanic && (isAdmin || t.status !== "closed") && (
           <button className="linkish" style={{ marginLeft: "auto" }} onClick={remove}>
             Delete
           </button>
@@ -684,7 +699,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
 
       {printDoc && (
         <PrintPortal>
-          <TicketPrint t={printDoc.ticket} settings={settings} />
+          <TicketPrint t={printDoc.ticket} settings={settings} mechanic={mechanic} />
         </PrintPortal>
       )}
     </div>
@@ -692,7 +707,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
 }
 
 /* ---------- the printed ticket: big type, heavy lines, room to write ---------- */
-export function TicketPrint({ t, settings, blank }) {
+export function TicketPrint({ t, settings, blank, mechanic }) {
   const dealer = t.source === "dealer";
   const r = ticketTotals(t);
   const rows = [...t.lines.filter((l) => (l.desc || "").trim() || n2(l.unit))];
@@ -780,8 +795,8 @@ export function TicketPrint({ t, settings, blank }) {
               <td>{(LINE_KINDS.find((k) => k[0] === l.kind) || ["", ""])[1]}</td>
               <td>{l.desc}</td>
               <td className="n">{n2(l.qty)}</td>
-              <td className="n">{cents(l.unit)}</td>
-              <td className="n">{cents(n2(l.qty) * n2(l.unit))}</td>
+              <td className="n">{mechanic ? "" : cents(l.unit)}</td>
+              <td className="n">{mechanic ? "" : cents(n2(l.qty) * n2(l.unit))}</td>
             </tr>
           ))}
           {Array.from({ length: spare }).map((_, i) => (
@@ -801,7 +816,7 @@ export function TicketPrint({ t, settings, blank }) {
           <p>Mechanic signature: ______________________ Date: __________</p>
           <p>{dealer ? "Approved by: ______________________" : "Customer approval: ______________________"}</p>
         </div>
-        <table className="wo-tot">
+        <table className={"wo-tot" + (mechanic ? " shop-hide" : "")}>
           <tbody>
             <tr>
               <td>Labor</td>

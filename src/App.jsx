@@ -896,6 +896,7 @@ function LeadForm({ car }) {
 function Admin({ go, say }) {
   const [session, setSession] = useState(undefined); // undefined = still checking
   const [profile, setProfile] = useState(null);
+  const [profileReady, setProfileReady] = useState(false);
   const [cars, setCars] = useState([]);
   const [leads, setLeads] = useState([]);
   const [sales, setSales] = useState([]);
@@ -931,6 +932,7 @@ function Admin({ go, say }) {
     } catch (e) {
       // Not fatal — the Team tab just won't show if this fails.
     }
+    setProfileReady(true);
   }, [notify]);
 
   useEffect(() => {
@@ -989,6 +991,36 @@ function Admin({ go, say }) {
 
   if (session === undefined) return <div className="gate" />;
   if (!session) return <SignIn go={go} />;
+  // Wait to learn the role, so a mechanic never glimpses the full dashboard.
+  if (!profileReady) return <div className="gate" />;
+
+  // A mechanic's login: repair tickets only.
+  if (profile && profile.role === "mechanic") {
+    return (
+      <div className="admin">
+        <header className="adbar">
+          <div className="wrap adbar-in">
+            <div className="brand">
+              <Badge size={40} />
+              <span className="brand-txt">
+                <strong>SHOP</strong>
+                <em>WORK TICKETS</em>
+              </span>
+            </div>
+            <div className="adbar-right">
+              <button className="btn btn-ghost" onClick={() => signOut()}>
+                Sign out
+              </button>
+            </div>
+          </div>
+        </header>
+        <main className="wrap adbody">
+          <Shop cars={cars} notify={notify} isAdmin={false} mechanic />
+        </main>
+        {toast && <div className="toast">{toast}</div>}
+      </div>
+    );
+  }
 
   const newLeads = leads.filter((l) => !l.handled).length;
 
@@ -3715,8 +3747,8 @@ function TeamPanel({ notify, myId }) {
     load();
   }, [load]);
 
-  const toggleRole = async (person) => {
-    const nextRole = person.role === "admin" ? "partner" : "admin";
+  const toggleRole = async (person, nextRole) => {
+    if (nextRole === person.role) return;
     if (
       person.id === myId &&
       nextRole !== "admin" &&
@@ -3739,9 +3771,10 @@ function TeamPanel({ notify, myId }) {
     <div className="form">
       <p className="micro gold">Team</p>
       <p className="scan-hint" style={{ marginBottom: 12 }}>
-        Partners can add cars, run sales, and see everything you can — the only thing kept
-        admin-only is this screen. To add someone, create their login in the Supabase dashboard
-        (Authentication → Users → Add user); they'll show up here automatically as a partner.
+        <b>Partners</b> can add cars, run sales, and see everything you can — the only thing kept
+        admin-only is this screen. A <b>mechanic</b> sees repair work tickets only (no sales, costs, documents or
+        money). To add someone, create their login in the Supabase dashboard (Authentication → Users → Add
+        user); they show up here as a partner — switch them to Mechanic right away if that is what they are.
       </p>
       {team === null ? (
         <p className="scan-hint">Loading…</p>
@@ -3754,9 +3787,11 @@ function TeamPanel({ notify, myId }) {
                 {p.email || p.id} {p.id === myId && <em>(you)</em>}
               </span>
               <span className="doc-date">joined {new Date(p.created_at).toLocaleDateString()}</span>
-              <button type="button" className="linkish" disabled={busyId === p.id} onClick={() => toggleRole(p)}>
-                {busyId === p.id ? "…" : p.role === "admin" ? "Make partner" : "Make admin"}
-              </button>
+              <select value={p.role} disabled={busyId === p.id} onChange={(e) => toggleRole(p, e.target.value)} aria-label="Role">
+                <option value="admin">Admin</option>
+                <option value="partner">Partner</option>
+                <option value="mechanic">Mechanic</option>
+              </select>
             </li>
           ))}
         </ul>

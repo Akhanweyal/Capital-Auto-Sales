@@ -568,3 +568,6 @@ button{font:inherit;cursor:pointer}
 .shop-carhit{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
 .shop-carhit span{flex:1;min-width:240px;font-weight:600}
 .shop-carpick{border:1px solid var(--line);padding:10px;font:inherit;min-width:260px;max-width:100%}
+
+.shop-hide{display:none !important}
+.shop-line.mech{grid-template-columns:96px 1fr 80px 28px}
