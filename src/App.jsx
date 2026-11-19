@@ -1198,7 +1198,7 @@ function Admin({ go, say }) {
 
         {!editing && !editingSale && tab === "files" && <VehicleFiles cars={cars} sales={sales} notify={notify} />}
 
-        {!editing && !editingSale && tab === "shop" && <Shop cars={cars} notify={notify} />}
+        {!editing && !editingSale && tab === "shop" && <Shop cars={cars} notify={notify} isAdmin={!!profile && profile.role === "admin"} />}
 
         {!editing && !editingSale && tab === "team" && profile && profile.role === "admin" && (
           <TeamPanel notify={notify} myId={session.user.id} />

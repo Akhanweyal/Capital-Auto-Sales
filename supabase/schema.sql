@@ -576,8 +576,9 @@ begin
   if tg_table_name = 'cars' and old.sold then
     raise exception 'A sold car must be kept for 5 years (Va. Code 46.2-1529) and cannot be deleted.';
   end if;
-  if tg_table_name = 'shop_tickets' and old.status = 'closed' then
-    raise exception 'A closed repair ticket is a service record and cannot be deleted. Mark it Void instead.';
+  -- An admin may delete one on purpose (a test or a mistake); everyone else marks it Void.
+  if tg_table_name = 'shop_tickets' and old.status = 'closed' and not public.is_admin() then
+    raise exception 'A closed repair ticket is a service record and cannot be deleted by a non-admin. Mark it Void instead.';
   end if;
   return old;
 end;

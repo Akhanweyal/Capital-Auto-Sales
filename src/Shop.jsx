@@ -45,7 +45,7 @@ const vehText = (v) => [v && v.year, v && v.make, v && v.model].filter(Boolean).
 const SQL_HELP =
   "The shop tables aren't set up yet. Open Supabase → SQL Editor and run the last section of supabase/schema.sql (headed “repair shops”), then reload.";
 
-export default function Shop({ cars, notify }) {
+export default function Shop({ cars, notify, isAdmin }) {
   const [tickets, setTickets] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -90,6 +90,7 @@ export default function Shop({ cars, notify }) {
   if (editing) {
     return (
       <TicketForm
+        isAdmin={!!isAdmin}
         initial={editing}
         tickets={tickets || []}
         cars={cars}
@@ -326,7 +327,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
                 </div>
                 <div className="row-acts">
                   <button className="mini" onClick={() => onOpen(t)}>
-                    Open
+                    Edit
                   </button>
                   <button className="mini" onClick={() => setPrintDoc({ ticket: t })}>
                     Print
@@ -347,7 +348,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
 }
 
 /* ---------- ticket form ---------- */
-function TicketForm({ initial, tickets, cars, settings, notify, onCancel, onSaved, onDeleted }) {
+function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCancel, onSaved, onDeleted }) {
   const [t, setT] = useState(() => structuredClone(initial));
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -389,8 +390,8 @@ function TicketForm({ initial, tickets, cars, settings, notify, onCancel, onSave
 
   const remove = async () => {
     if (!t.id) return;
-    if (t.status === "closed") return notify("A closed ticket is a service record and can't be deleted. Mark it Void instead.");
-    if (!window.confirm(`Delete ticket ${t.num}? Mark it Void instead if you want to keep a record.`)) return;
+    if (t.status === "closed" && !isAdmin) return notify("A closed ticket is a service record — only an admin can delete it. Mark it Void instead.");
+    if (!window.confirm(t.status === "closed" ? `Delete the CLOSED ticket ${t.num}? It is a service record and this can't be undone. (Marking it Void keeps a record.)` : `Delete ticket ${t.num}? This can't be undone. (Marking it Void keeps a record.)`)) return;
     try {
       await deleteTicket(t.id);
       onDeleted(t.id);
@@ -694,7 +695,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, onCancel, onSave
         <button className="linkish" onClick={onCancel}>
           Back
         </button>
-        {t.id && (
+        {t.id && (isAdmin || t.status !== "closed") && (
           <button className="linkish" style={{ marginLeft: "auto" }} onClick={remove}>
             Delete
           </button>
