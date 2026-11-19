@@ -652,9 +652,20 @@ function TicketForm({ initial, tickets, cars, settings, notify, onCancel, onSave
               <dd>
                 <b>{cents(dealerCost(t, settings))}</b>
               </dd>
+              <dt className="scan-hint">= parts at our cost</dt>
+              <dd className="scan-hint">{cents(totals.partsCost)}</dd>
+              <dt className="scan-hint">+ sublet at our cost</dt>
+              <dd className="scan-hint">{cents(totals.subletCost)}</dd>
+              <dt className="scan-hint">+ mechanic's share of labor ({100 - n2((settings.shops.find((x) => x.id === t.shop) || { ourShare: 100 }).ourShare)}%)</dt>
+              <dd className="scan-hint">{cents(totals.labor * (1 - n2((settings.shops.find((x) => x.id === t.shop) || { ourShare: 100 }).ourShare) / 100))}</dd>
             </>
           )}
         </dl>
+        {dealer && t.lines.some((l) => (l.kind === "part" || l.kind === "sublet") && n2(l.unit) > 0 && !n2(l.cost)) && (
+          <p className="scan-hint warn" style={{ gridColumn: "1/-1" }}>
+            A part or sublet line has no “our cost each” entered, so it counts as $0 of real cost. Fill in what you actually paid for it.
+          </p>
+        )}
       </div>
 
       <div className="cost-section">
