@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { PrintPortal, usePrintDoc } from "./App.jsx";
 import { fetchCarCost, upsertCarCost } from "./lib/db.js";
-import { STATUS_LABEL, n2, dealerCost } from "./lib/shop.js";
+import { STATUS_LABEL, n2, dealerCost, ticketTotals } from "./lib/shop.js";
 
 /* One car's full cost sheet: every shop ticket on it plus cleaning, paint and any
    other expense, added into one repair & recon cost that prints on one sheet.
@@ -21,6 +21,18 @@ const todayStr = () => {
 };
 const shopName = (settings, id) => (settings.shops.find((s) => s.id === id) || {}).name || "Shop";
 export const carLabel = (c) => `${c.year} ${c.make} ${c.model}${c.trim ? " " + c.trim : ""}${c.vin ? " · " + c.vin : ""}${c.sold ? " (sold)" : c.published ? "" : " (draft)"}`;
+
+// Internal only (screen, never on the printed sheet): how a ticket's cost is made up.
+function breakdown(t, settings) {
+  const r = ticketTotals(t);
+  const share = n2((settings.shops.find((x) => x.id === t.shop) || { ourShare: 100 }).ourShare);
+  const parts = [];
+  if (r.partsCost) parts.push("parts " + cents(r.partsCost));
+  if (r.subletCost) parts.push("sublet " + cents(r.subletCost));
+  if (share < 100 && r.labor) parts.push("mechanic's labor share " + cents(r.labor * (1 - share / 100)));
+  const missing = t.lines.some((l) => (l.kind === "part" || l.kind === "sublet") && n2(l.unit) > 0 && !n2(l.cost));
+  return (parts.join(" + ") || "no cost counted") + (missing ? " — a part has no “our cost each” entered on the ticket" : "");
+}
 
 export default function CarRecon({ car, tickets, settings, onBack, onOpen }) {
   const [cost, setCost] = useState(0);
@@ -128,7 +140,10 @@ export default function CarRecon({ car, tickets, settings, onBack, onOpen }) {
                     {shopName(settings, t.shop)} · {STATUS_LABEL[t.status]}
                   </div>
                 </td>
-                <td>{work(t)}</td>
+                <td>
+                  {work(t)}
+                  <div className="scan-hint">{breakdown(t, settings)}</div>
+                </td>
                 <td className="n">{cents(dealerCost(t, settings))}</td>
               </tr>
             ))}

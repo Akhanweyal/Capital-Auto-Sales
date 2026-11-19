@@ -318,7 +318,7 @@ function TicketsView({ tickets, settings, cars, onOpen }) {
                     <span className={"chip shop-" + t.status}>{STATUS_LABEL[t.status] || t.status}</span>
                     <span className="chip">
                       {t.source === "dealer"
-                        ? `Our cost ${cents(dealerCost(t, settings))}`
+                        ? `Total ${cents(r.total)}`
                         : r.balance > 0.004
                         ? `Owes ${cents(r.balance)}`
                         : `Total ${cents(r.total)} · paid`}
@@ -468,7 +468,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
         </button>
         <span className="scan-hint">
           {dealer
-            ? "Our own car. The real cost (parts, sublet, mechanic's share) is added to that car's expenses when it sells."
+            ? "Our own car. The cost of this work is tracked on that car's internal cost sheet (Inventory recon) — it never prints on the ticket."
             : "Billed to the customer — this is shop income. Sales tax applies to parts."}
         </span>
       </div>
@@ -645,28 +645,7 @@ function TicketForm({ initial, tickets, cars, settings, notify, isAdmin, onCance
               </dd>
             </>
           )}
-          {dealer && (
-            <>
-              <dt>
-                <b>Our real cost</b>
-              </dt>
-              <dd>
-                <b>{cents(dealerCost(t, settings))}</b>
-              </dd>
-              <dt className="scan-hint">= parts at our cost</dt>
-              <dd className="scan-hint">{cents(totals.partsCost)}</dd>
-              <dt className="scan-hint">+ sublet at our cost</dt>
-              <dd className="scan-hint">{cents(totals.subletCost)}</dd>
-              <dt className="scan-hint">+ mechanic's share of labor ({100 - n2((settings.shops.find((x) => x.id === t.shop) || { ourShare: 100 }).ourShare)}%)</dt>
-              <dd className="scan-hint">{cents(totals.labor * (1 - n2((settings.shops.find((x) => x.id === t.shop) || { ourShare: 100 }).ourShare) / 100))}</dd>
-            </>
-          )}
         </dl>
-        {dealer && t.lines.some((l) => (l.kind === "part" || l.kind === "sublet") && n2(l.unit) > 0 && !n2(l.cost)) && (
-          <p className="scan-hint warn" style={{ gridColumn: "1/-1" }}>
-            A part or sublet line has no “our cost each” entered, so it counts as $0 of real cost. Fill in what you actually paid for it.
-          </p>
-        )}
       </div>
 
       <div className="cost-section">
