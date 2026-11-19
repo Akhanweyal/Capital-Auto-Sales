@@ -8,10 +8,10 @@ export const DEFAULT_SETTINGS = {
   laborRate: 100,
   taxRate: 6,
   shops: [
-    { id: "s1", name: "Shop 1 · Rental", arrangement: "Rented to tenant mechanic", ourShare: 0 },
-    { id: "s2", name: "Shop 2 · Shared Mechanic", arrangement: "Shared with mechanic", ourShare: 50 },
-    { id: "s3", name: "Shop 3 · Heavy Duty", arrangement: "Dealership-run", ourShare: 100 },
-    { id: "s4", name: "Shop 4 · Body Shop", arrangement: "Dealership-run", ourShare: 100 },
+    { id: "s1", name: "Shop 1", arrangement: "Rental — rented to a tenant mechanic", ourShare: 0 },
+    { id: "s2", name: "Shop 2", arrangement: "Shared mechanic — income split with the mechanic", ourShare: 50 },
+    { id: "s3", name: "Shop 3", arrangement: "Heavy duty (trucks) — dealership-run", ourShare: 100 },
+    { id: "s4", name: "Shop 4 · Body Shop", arrangement: "Body shop — dealership-run", ourShare: 100 },
   ],
 };
 
@@ -276,7 +276,14 @@ export async function fetchSettings() {
   if (error) throw error;
   const d = data && data.data;
   if (d && Array.isArray(d.shops) && d.shops.length) {
-    return { laborRate: n2(d.laborRate) || DEFAULT_SETTINGS.laborRate, taxRate: d.taxRate == null ? DEFAULT_SETTINGS.taxRate : n2(d.taxRate), shops: d.shops };
+    const OLD = { s1: ["Shop 1 · Rental", "Rented to tenant mechanic"], s2: ["Shop 2 · Shared Mechanic", "Shared with mechanic"], s3: ["Shop 3 · Heavy Duty", "Dealership-run"], s4: ["Shop 4 · Body Shop", "Dealership-run"] };
+    const shops = d.shops.map((sh) => {
+      const def = DEFAULT_SETTINGS.shops.find((x) => x.id === sh.id);
+      const old = OLD[sh.id];
+      if (!def || !old) return sh;
+      return { ...sh, name: sh.name === old[0] ? def.name : sh.name, arrangement: sh.arrangement === old[1] ? def.arrangement : sh.arrangement };
+    });
+    return { laborRate: n2(d.laborRate) || DEFAULT_SETTINGS.laborRate, taxRate: d.taxRate == null ? DEFAULT_SETTINGS.taxRate : n2(d.taxRate), shops };
   }
   return DEFAULT_SETTINGS;
 }

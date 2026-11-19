@@ -718,7 +718,7 @@ export function TicketPrint({ t, settings, blank, mechanic }) {
     <div className="wo">
       <div className="wo-head">
         <div>
-          <h1>Capital Auto Sales</h1>
+          <h1>Capital Auto Sales Repairs</h1>
           <p>8607 Oakview Ave, Henrico, VA 23228 · 804-372-4422</p>
           <p className="wo-shop">{shopName(settings, t.shop)}</p>
         </div>
