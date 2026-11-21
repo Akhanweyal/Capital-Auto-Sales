@@ -3901,11 +3901,15 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
   // sale keeps the tax it was written with — reopening it to print must not
   // change the figure the buyer signed.
   const locked = !!(existing && existing.finalized);
+  // The buyer may choose to pay the 4.15% tax to DMV himself when he titles the
+  // car, instead of paying it to us on this order. Then it isn't collected here
+  // (tax of 0 on the order); the estimate is still printed for his information.
+  const atDmv = !!(s.buyer && s.buyer.taxAtDmv);
   useEffect(() => {
     if (locked) return;
-    const tax = calcVaTax(num(s.vehicle_price) + num(s.accessories) + num(s.processing_fee));
+    const tax = atDmv ? 0 : calcVaTax(num(s.vehicle_price) + num(s.accessories) + num(s.processing_fee));
     setS((prev) => (Number(prev.sales_tax) === tax ? prev : { ...prev, sales_tax: tax }));
-  }, [locked, s.vehicle_price, s.accessories, s.processing_fee]);
+  }, [locked, atDmv, s.vehicle_price, s.accessories, s.processing_fee]);
 
   const set = (path) => (e) =>
     setS((prev) => setPath(prev, path, e.target.type === "checkbox" ? e.target.checked : e.target.value));
@@ -4348,12 +4352,17 @@ function SaleForm({ initial, cars, onCancel, onSaved, notify }) {
           <Rule />
           <p className="micro">Taxes &amp; fees</p>
           <div className="settle-row">
-            <span>4.15% VA sales &amp; use tax</span>
+            <span>{atDmv ? "VA sales & use tax — buyer pays DMV directly" : "4.15% VA sales & use tax"}</span>
             <strong>{moneyCents(s.sales_tax)}</strong>
           </div>
+          <label className="check" style={{ gridColumn: "1 / -1" }}>
+            <input type="checkbox" checked={atDmv} disabled={locked} onChange={set("buyer.taxAtDmv")} />
+            <span>Buyer will pay the sales &amp; use tax to DMV himself (not collected on this order)</span>
+          </label>
           <p className="scan-hint" style={{ marginTop: -4 }}>
-            Figured on the full cash price above ($75 minimum). Virginia gives no tax credit for a
-            trade-in, so the trade doesn't lower this.
+            {atDmv
+              ? `Left off this order's total. DMV will charge him about ${moneyCents(calcVaTax(totals.cashPrice))} when he titles the car; the order says so.`
+              : "Figured on the full cash price above ($75 minimum). Virginia gives no tax credit for a trade-in, so the trade doesn't lower this."}
           </p>
           <label>
             <span>License fee</span>
@@ -4769,7 +4778,11 @@ export function SaleDocument({ s, totals }) {
           <VN n={2} label="Accessories" value={s.accessories} />
           <VN n={3} label="Processing Fee" value={s.processing_fee} none />
           <VN n={4} label="Taxable Sale Price (1+2+3)" value={totals.cashPrice} strong />
-          <VN n={5} label="VA Motor Vehicle Sales & Use Tax (4.15%)" value={s.sales_tax} />
+          {b.taxAtDmv ? (
+            <VN n={5} label={`VA Motor Vehicle Sales & Use Tax (4.15%) — Buyer pays directly to DMV at titling, est. ${moneyCents(calcVaTax(totals.cashPrice))} (not included in this total)`} value={0} none />
+          ) : (
+            <VN n={5} label="VA Motor Vehicle Sales & Use Tax (4.15%)" value={s.sales_tax} />
+          )}
           <VN n={6} label="Title Fee" value={s.title_fee} />
           <VN n={7} label="Registration Fee" value={s.registration_fee} />
           <VN n={8} label="License Fee" value={s.license_fee} />
