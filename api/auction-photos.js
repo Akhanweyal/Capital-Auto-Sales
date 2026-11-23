@@ -77,6 +77,16 @@ export default async function handler(req, res) {
       });
       return;
     }
+    // A link straight to a picture (e.g. a Manheim image link) — there is no page to
+    // search, the link itself is the photo.
+    const type = r.headers.get("content-type") || "";
+    if (/^image//i.test(type)) {
+      try {
+        if (r.body && r.body.cancel) await r.body.cancel();
+      } catch {}
+      res.status(200).json({ images: [target.href] });
+      return;
+    }
     const html = await r.text();
     const images = extractImages(html, target.href);
     res.status(200).json({
