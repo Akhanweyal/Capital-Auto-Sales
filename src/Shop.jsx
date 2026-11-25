@@ -292,7 +292,7 @@ function TicketsView({ tickets, settings, cars, mechanic, onOpen }) {
         </button>
         <button
           className="btn btn-navy"
-          onClick={() => setPrintDoc({ ticket: blankTicket(settings, tickets, shopArg), blank: true })}
+          onClick={() => setPrintDoc({ ticket: { ...blankTicket(settings, tickets, shopArg), lines: [] }, blank: true })}
         >
           Print blank ticket
         </button>
