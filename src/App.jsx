@@ -56,7 +56,7 @@ export const DEALER = {
   cellPhoneHref: "+18042928414",
   address: "8607 Oakview Ave",
   city: "Henrico, VA 23228",
-  hours: "Mon–Sat 9am – 7pm  ·  Sun by appointment",
+  hours: "Mon–Fri 9am – 5pm  ·  Sat 10am – 2pm  ·  Sun closed — call or ask about inventory",
   // The processing fee you charge on every sale, in dollars (0 = none).
   // Va. Code § 46.2-1581(8): when a price is advertised without this fee
   // included, the fee's amount has to be shown with it — so this prints

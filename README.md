@@ -126,7 +126,7 @@ export const DEALER = {
   phone: "804-372-4422",
   address: "8607",            // <-- full street address goes here
   city: "Richmond, VA",
-  hours: "Mon–Sat 9am – 7pm  ·  Sun by appointment",
+  hours: "Mon–Fri 9am – 5pm  ·  Sat 10am – 2pm  ·  Sun closed — call or ask about inventory",
 };
 ```
 
